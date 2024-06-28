@@ -3,7 +3,8 @@
          racket/list
          racket/match
          racket/vector
-         racket/sequence)
+         racket/sequence
+         "for-parts.rkt")
 
 (require (for-syntax syntax/for-body syntax/parse racket/syntax racket/base)
          syntax/parse/define)
@@ -704,19 +705,18 @@
              [(list-form? exprs)
               (case (form-length exprs)
                 [(1) (define e1 (form-ref exprs 1))
-                     (define any-missing? (for/or ([e (in-elements e1)])
-                                            (MissingQ e)))
+                     (define missing-count (for/sum ([e (in-elements e1)])
+                                             (if (MissingQ e) 1 0)))
                      (cond
-                       [any-missing? (define parts (for/vector
-                                                       ([e (in-sequences (in-value #f)
-                                                                         (in-elements e1))]
-                                                        #:unless (MissingQ e))
-                                                     e))                                     
-                                     (make-form 'List '() parts)]
+                       [(> missing-count 0)  (define parts
+                                               (for/parts #:length (- (Length e1) missing-count)
+                                                          ([e (in-elements e1)]
+                                                           #:unless (MissingQ e))
+                                                 e))
+                                             (make-form 'List '() parts)]
                        [else e1])]
-                [else (define parts (for/vector([e (in-sequences (in-value #f)
-                                                                 (in-elements* (filter non-missing? (form-elements exprs))))]
-                                                #:unless (MissingQ e))
+                [else (define parts (for/parts([e (in-elements* (filter non-missing? (form-elements exprs)))]
+                                               #:unless (MissingQ e))
                                       e))
                       (make-form 'List '() parts)])]
              [else form])]
@@ -753,10 +753,8 @@
             (cond
               [same-heads?
                (define total-len (apply + (map Length (cons expr1 exprs))))
-               (define parts     (for/vector #:length (+ total-len 1)
-                                             ([x (in-sequences
-                                                  (in-value #f)
-                                                  (in-elements* (cons expr1 exprs)))])
+               (define parts     (for/parts #:length (+ total-len 1)
+                                            ([x (in-elements* (cons expr1 exprs))])
                                    x))
                (make-form head1 '() parts)]
               ; Not all heads were the same
@@ -770,9 +768,8 @@
             (define elem (form-ref form 2))
             (cond
               [(form? expr) (define n     (Length expr))
-                            (define parts (for/vector #:length (+ n 2)
-                                                      ([x (in-sequences
-                                                           (in-value    #f)
+                            (define parts (for/parts #:length (+ n 2)
+                                                      ([x (in-sequences                                                           
                                                            (in-elements expr)
                                                            (in-value    elem))])
                                             x))
@@ -794,11 +791,10 @@
             (define elem (form-ref form 2))
             (cond
               [(form? expr) (define n     (Length expr))
-                            (define parts (for/vector #:length (+ n 2)
-                                                      ([x (in-sequences
-                                                           (in-value    #f)    
-                                                           (in-value    elem)
-                                                           (in-elements expr))])
+                            (define parts (for/parts #:length (+ n 2)
+                                                     ([x (in-sequences    
+                                                          (in-value    elem)
+                                                          (in-elements expr))])
                                             x))
                             (make-form (Head form) '() parts)]
               [else         (begin
@@ -830,12 +826,11 @@
                  [(form? form) (define l  (Length list))
                                (cond
                                  [(<= 1 n (+ l 1))
-                                  (define parts (for/vector #:length (+ l 2)
-                                                            ([x (in-sequences
-                                                                 (in-value    #f)
-                                                                 (in-elements list 1 (- n 1))
-                                                                 (in-value    elem)
-                                                                 (in-elements list n l))])
+                                  (define parts (for/parts #:length (+ l 2)
+                                                           ([x (in-sequences                                                          
+                                                                (in-elements list 1 (- n 1))
+                                                                (in-value    elem)
+                                                                (in-elements list n l))])
                                                   x))
                                   (displayln parts)
                                   (make-form (Head list) '() parts)]
@@ -898,13 +893,13 @@
        [(not same?)       orig-form]
        [(null? h-indices) orig-form]
        [else              (define dim (car h-lengths))                          
-                          (Form h
-                                (for/list ([i (in-inclusive-range 1 dim)])
-                                  (Form (Head f-args)
-                                        (for/list ([arg (in-elements f-args)])
-                                          (if (has-head? arg h)
-                                              (form-ref arg i)
-                                              arg)))))])]
+                          (make-form h '()
+                                     (for/parts ([i (in-inclusive-range 1 dim)])
+                                       (make-form (Head f-args) '()
+                                                  (for/parts ([arg (in-elements f-args)])
+                                                    (if (has-head? arg h)
+                                                        (form-ref arg i)
+                                                        arg)))))])]
     [else (error 'Thread "internal error, got non-expression")]))
 
 
@@ -922,9 +917,9 @@
               ; x⁰ = 1
               [(equal? y 0)                            1]
               ; (ab)^c = a^c b^c  when c<>0 is an integer
-              [(and (has-head? x 'Times) (integer? y)) (define factors (for/list ([x (in-elements x)])
+              [(and (has-head? x 'Times) (integer? y)) (define factors (for/parts ([x (in-elements x)])
                                                                          (Power x y)))
-                                                       (Form 'Times factors)]
+                                                       (make-form 'Times '() factors)]
               ; (a^b)^c = a^(bc) when c is an integer
               [(and (and (has-head? x 'Power) (= (form-length x) 2))
                     (integer? y))
