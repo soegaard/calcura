@@ -417,9 +417,37 @@
        form])))
 
 
+;  Note:      The symbol x is sorted as if it was written 1*x. Thus 1/2 x << x.
+;  Rationale: This bring x and r*x next to each other.
+;  Also note: This means the type order for symbols and forms must be the same.
+
+(define (times-by-form? a b) ; is a = (Times number b)
+  ; b is a symbol
+  (and (form? a)
+       (eq? (form-head a) 'Times)
+       (= (form-length a) 2)
+       (eq? (form-ref a 2) b)
+       (number? (form-ref a 1))))
+
+(define (times-form? a)
+  (and (form? a)
+       (eq? (form-head a) 'Times)))
+
+(define (symbol->times-form x)
+  (make-form 'Times '() (vector 1 x)))
+
+(define (times-constant a)
+  (cond
+    [(> (form-length a) 0) (define r (form-ref a 1))
+                           (if (number? r)
+                               r
+                               1)]
+    [else 1]))
+      
 
 (define-command Order #:attributes '(Protected)
   (let ()
+    (define the-form-order 100)
     (define type-order-ht
       (hasheq
        ; Numbers
@@ -430,14 +458,14 @@
        'Boolean  1
        'String   2
        ; Symbols including Nothing, Missing
-       'Symbol   3
-       'Nothing  3
-       'Missing  3
+       'Symbol   the-form-order
+       'Nothing  the-form-order
+       'Missing  the-form-order
        ; Forms are missing from this table
-       ; Form    100
+       ; Form    the-form-order
        ))
     (define (type-order x)
-      (hash-ref type-order-ht (Head x) 100))
+      (hash-ref type-order-ht (Head x) the-form-order))
     (define (NumberOrder a b)
       (cond
         [(and (real? a) (real? b))
@@ -483,11 +511,10 @@
                     [(1)   1]
                     [(-1) -1]
                     [else 
-                     (displayln 'same-heads)
                      (define res (for/or ([ea (in-elements a)]
                                           [eb (in-elements b)])
                                    (case (Order ea eb)
-                                     [(1)     1]
+                                     [( 1)    1]
                                      [(-1)   -1]
                                      [else   #f])))
                           (or res
@@ -507,8 +534,15 @@
                   [(0)   (NumberOrder  a b)]
                   [(1)   (BooleanOrder a b)]
                   [(2)   (StringOrder  a b)]
-                  [(3)   (SymbolOrder  a b)]
-                  [(100) (FormOrder    a b)]
+                  [(100) ; Symbols and forms both end up here
+                   (cond
+                     ; note: (times-by-form? a b) ; is a = (Times number b)                     
+                     [(and (symbol? a) (symbol? b))           (SymbolOrder  a b)]
+                     [(and (symbol? a) (times-by-form? b a))  (NumberOrder 1 (times-constant b))] 
+                     [(and (symbol? a) (times-form? b))       (Order (symbol->times-form a) b)]   
+                     [(and (symbol? b) (times-by-form? a b))  (NumberOrder (times-constant a) 1)] 
+                     [(and (symbol? b) (times-form? a))       (Order a (symbol->times-form b))]   
+                     [else                                    (FormOrder a b)])]
                   [else  (error 'Order "internal error")])])]
         [else form]))))
 
@@ -563,10 +597,11 @@
     (cond
       [(eq? expr1 expr)      expr]
       [(= i $IterationLimit) expr]
-      [else                  (loop (Eval1 expr1) (+ i 1))])))
+      [else                  (loop (+ i 1) (Eval1 expr1))])))
 
 
 (define (Eval1 expr)
+  ; (displayln (list 'Eval1 (FullForm expr)))
   (cond
     [(atom? expr) expr]
     [(form? expr) (define form expr)
@@ -599,7 +634,8 @@
                          [else                (cons (Eval (car exprs))
                                                     (cdr exprs))])]                  
                       ; default is to evaluate all arguments in order
-                      [else (map Eval exprs)]))                  
+                      [else (map Eval exprs)]))
+                  (displayln (list 'evaluated-exprs evaluated-exprs)) 
                   ; 4. Flatten any arguments of the form Sequence[e₁,...]
                   (define sequence-flattened-parts
                     (let ()
@@ -614,6 +650,7 @@
                       (if (memq 'SequenceHold attributes)
                           evaluated-exprs
                           (build evaluated-exprs '()))))
+                  (displayln (list 'sequence-flattened-parts sequence-flattened-parts))
                   ; 5. If h has the attribute 'Flat, flatten subexpressions with head h
                   (define flat-flattened-parts
                     (let ()
@@ -630,18 +667,22 @@
                       (if (memq 'Flat attributes)
                           (build sequence-flattened-parts '())
                           sequence-flattened-parts)))
+                  (displayln (list 'flat-flattened-parts flat-flattened-parts))
                   ; 6. Reconstruct the form
-                  (define new-form (Form h (form-attributes form) flat-flattened-parts))
+                  (define new-form (let ()
+                                     (define new (Form h (form-attributes form) flat-flattened-parts))
+                                     (if (equal? new form) form new)))
+                  (displayln (list 'new-form (FullForm new-form) (eq? form new-form)))
                   ; (displayln (list 'new-form (FullForm new-form)))
                   ; 7. If h has the attribute 'Listable, thread
-                  ; (displayln (list 'attributes attributes (and (memq 'Listable attributes) #t)))
+                  (displayln (list 'attributes attributes (and (memq 'Listable attributes) #t)))
                   (define threaded-form
                     (cond
                       [(memq 'Listable attributes)  (if (> (form-length new-form) 0)
                                                         (do-thread2 new-form new-form 'List)
                                                         new-form)]
                       [else new-form]))
-                  ; (displayln (list 'threaded-form (FullForm threaded-form)))
+                  (displayln (list 'threaded-form (FullForm threaded-form) (eq? form threaded-form)))
                   ; (define threaded-form new-form)
                   (cond
                     [(not (eq? new-form threaded-form)) threaded-form]
@@ -650,14 +691,17 @@
                      (define sorted-form
                        (cond
                          [(memq 'Orderless attributes)
-                          (Sort new-form)]
+                          (define new-sorted (Sort new-form))
+                          (if (equal? new-sorted form) form new-sorted)]
                          [else new-form]))
+                     (displayln (list 'sorted-form (FullForm sorted-form) (eq? form sorted-form)))
                      ; 9. If h is a builtin, we call it.
                      (let ()
-                       (define proc (get-builtin h))
-                       ; (displayln (list 'sorted-form sorted-form))
+                       (define proc (get-builtin h))                       
                        (cond
-                         [proc (proc sorted-form)]
+                         [proc (define result (proc sorted-form))
+                               (displayln (list 'proc proc (FullForm result)))
+                               result]
                          [else sorted-form]))])]))
 
 
@@ -999,8 +1043,10 @@
 ;   Since the arguments are sorted, we can assume the numbers
 ;   are at the beginning.
 
+
 (define-command Plus #:attributes '(Flat Listable NumericFunction OneIdentity Orderless Protected)
   (λ (form)
+    (displayln (FullForm form))
   ;; ; count how many times x0 occurs in the beginning of xs
   (define (count-same x0 xs)
     (cond
