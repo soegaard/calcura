@@ -86,14 +86,14 @@
              (unless (zero? len)
                (for_/fold/derived
                 orig-stx 
-                ([i 0])
+                ([i 1])
                 (limited-for-clause ...)
                 middle-body ...
                 (unsafe-vector*-set! v i (let () last-body ...))
                 (unsafe-fx+ 1 i)))
              v))))]
     [(_ #:length length-expr (for-clause ...) body ...)
-     (for_/parts #'(fv #:length length-expr #:fill 0 (for-clause ...) body ...) 
+     (for_/parts #'(fv #:length length-expr #:fill #f (for-clause ...) body ...) 
                  orig-stx for_/parts-stx for_/fold/derived-stx wrap-all?)]))
 
 (define-syntax (for/parts stx)
