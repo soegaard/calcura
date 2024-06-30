@@ -79,7 +79,7 @@
                    [for_/parts for_/parts-stx]
                    [for_/fold/derived for_/fold/derived-stx])
        (syntax/loc stx
-         (let ([len length-expr])
+         (let ([len (+ length-expr 1)])
            (unless (exact-nonnegative-integer? len)
              (raise-argument-error 'for_/parts "exact-nonnegative-integer?" len))
            (let ([v (make-vector len fill-expr)])

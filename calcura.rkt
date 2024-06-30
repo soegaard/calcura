@@ -89,9 +89,16 @@
   ; number of elements in the form
   (- (vector-length (form-parts expr)) 1))
 
-
 (define-syntax-rule (in-head expr)
   (in-value (Head expr)))
+
+(define (FullForm expr)
+  (cond
+    [(atom? expr) expr]
+    [(form? expr) (cons (FullForm (form-head expr))
+                        (map FullForm (form-elements expr)))]
+    [else
+     (list 'RACKET expr)]))
 
 
 (define in-elements
@@ -302,7 +309,88 @@
       [(1)  (define expr (form-ref form 1))
             (atom? expr)]
       [else form])))
-            
+
+(define-syntax (match-form stx)
+  (syntax-case stx (else)
+    [(_match-form form-expr [(head-sym elem-pat ...) . more] ...)
+     (syntax/loc stx
+       (let ([form-val form-expr])
+         (unless (form? form-val)
+           (raise-syntax-error 'match-form (~a "expected form, got: " form-val)))
+         (match form-val
+           [(form 'head-sym _ (vector #f elem-pat ...)) . more]
+           ...
+           [_ (raise-syntax-error 'match-form (~a "no matching clause for " form-val))])))]
+    [(_match-form form-expr [(head-sym elem-pat ...) . more] ... [else . more-else])
+     (syntax/loc stx
+       (let ([form-val form-expr])
+         (unless (form? form-val)
+           (raise-syntax-error 'match-form (~a "expected form, got: " form-val)))
+         (match form-val
+           [(form 'head-sym _ (vector #f elem-pat ...)) . more]
+           ...
+           [_ . more-else])))]))
+
+(define-syntax (match-parts stx)
+  (syntax-case stx (else)
+    [(_match-parts form-expr [(elem-pat ...) . more] ...)
+     (syntax/loc stx
+       (let ([form-val form-expr])
+         (unless (form? form-val)
+           (raise-syntax-error 'match-form (~a "expected form, got: " form-val)))
+         (match form-val
+           [(form _ _ (vector #f elem-pat ...)) . more]
+           ...
+           [_ (raise-syntax-error 'match-parts (~a "no matching clause for " form-val))])))]
+    [(_match-parts form-expr [(elem-pat ...) . more] ... [else . more-else])
+     (syntax/loc stx
+       (let ([form-val form-expr])
+         (unless (form? form-val)
+           (raise-syntax-error 'match-form (~a "expected form, got: " form-val)))
+         (match form-val
+           [(form _ _ (vector #f elem-pat ...)) . more]
+           ...
+           [_ . more-else])))]))
+
+;; Example:
+;; > (match-form (List 1 2 3) [(List 1 2 3) 'yes])
+
+(define-syntax-rule
+  (define-match-expanders ([name: predicate] ...))
+  (begin
+    (define-match-expander name:
+      (λ (stx)
+        (syntax-case stx ()
+          [(_name: x) (syntax/loc stx (? predicate x))])))
+    ...))
+
+(define-match-expanders ([integer:  exact-integer?]
+                         [rational: exact-rational?]
+                         [real:     real?]
+                         [complex:  complex?]
+                         [symbol:   symbol?]
+                         [atom:     atom?]
+                         [boolean:  boolean?]
+                         [string:   string?]))
+
+; (form: _)                      match any form
+; (form: x)                      match any form, bind it to x
+; (form: x h)                    match any form with head h, bind it to x
+; (form: (head-sym elm-pat ...)) match a form with head `head-sym` and parts matching `elm-pat ...`.
+(define-match-expander form:
+  (λ (stx)
+    (syntax-case stx (_)
+      [(_form: (head-sym elm-pat ...)) (syntax/loc stx (form 'head-sym _ (vector #f elm-pat ...)))]
+      [(_form: _)                      (syntax/loc stx (? form?))]
+      [(_form: name)                   (syntax/loc stx (? form? name))]
+      [(_form: name head)              (syntax/loc stx (? (λ (x) (has-head? x head)) name))])))
+
+(define-match-expander parts:
+  (λ (stx)
+    (syntax-case stx ()
+      [(_parts: name)                  (syntax/loc stx (and (? form?) (app (λ (x) (form-parts x)) name)))])))
+
+
 
 ; IMPORTANT
 ;   - when a new head symbol is added below, the function Order needs to be updated.
@@ -337,13 +425,12 @@
 ;   Return the number of elements in the expression `expr`.
 (define-command Length #:attributes '(Protected)
   (λ (form)
-    (case (form-length form)
-      [(1) (define expr (form-ref form 1))
-           (cond
-             [(form? expr) (form-length expr)]
-             [(atom? expr) 0]
-             [else
-              (error 'Length (~a "internal error - expected an expression as the first argument, got: " expr))])]
+    (match-parts form
+      [(expr) (cond
+                [(form? expr) (form-length expr)]
+                [(atom? expr) 0]
+                [else         (error 'Length (~a "internal error - expected an expression "
+                                                 "as the first argument, got: " expr))])]
       [else form])))
 
 
@@ -358,13 +445,11 @@
 ;   If `expr` has no head (an atom) return `expr`. 
 (define-command Apply #:attributes '(Protected)
   (λ (form)
-    (case (form-length form)
-      [(2)  (define f    (form-ref form 1))
-            (define expr (form-ref form 2))
-            (cond
-              [(form? expr) (make-form f '() (form-parts expr))]
-              [else         expr])]
-      [else form])))
+    (match-parts form
+     [(f expr) (cond
+                 [(form? expr) (make-form f '() (form-parts expr))]
+                 [else         expr])]
+     [else form])))
 
 
 ; A splice form will splice the elements into a surrounding list. 
@@ -417,36 +502,120 @@
        form])))
 
 
+;;;
+;;; Patterns
+;;;
+
+;; ; _  or Blank[]   matches any expression
+;; ; _h or Blank[h]  matches any expression with head `h`
+;; (define-match-expander Blank
+;;   (λ (stx)
+;;     (syntax-case stx (Blank)
+;;       [(Blank)    #'_]
+;;       [(Blank h)  #'(? (λ (x) (eq? (Head x) 'h)))]
+;;       [_       (raise-syntax-error 'Blank "expected: Blank" stx)])))
+
+;; ; sym:obj or Pattern[sym,obj]   matches the pattern `obj` and assigns the value to `sym`
+
+;; (define-match-expander Pattern
+;;   (λ (stx)
+;;     (syntax-case stx (Pattern)
+;;       [(Pattern sym obj) (symbol? (syntax-e #'sym))
+;;        #'(and obj sym)])))
+
+;; (equal? (FullForm (match (List 1 2 3)
+;;                          [(Pattern x (Blank Join)) (List 'Join x)]
+;;                          [(Pattern x (Blank List)) (List 'List x)]
+;;                          [_ 'no]))
+;;         '(List List (List 1 2 3)))
+
+;; ; p.. or Repeated[p]   matches one or more expression that matches the pattern p
+;; (define-match-expander Repeated
+;;   (λ (stx)
+;;     (syntax-case stx (Repeated)
+;;       [(Repeated p) 
+;;        #'(p (... ...))])))
+
+;; (equal? (FullForm (match (List 1 2 3)
+;;                     [(Pattern xs (ListPattern (Repeated _))) (Form 'List xs)]))
+;;         '(List List (List 1 2 3)))
+
+
 ;  Note:      The symbol x is sorted as if it was written 1*x. Thus 1/2 x << x.
 ;  Rationale: This bring x and r*x next to each other.
 ;  Also note: This means the type order for symbols and forms must be the same.
 
-(define (times-by-form? a b) ; is a = (Times number b)
-  ; b is a symbol
-  (and (form? a)
-       (eq? (form-head a) 'Times)
-       (= (form-length a) 2)
-       (eq? (form-ref a 2) b)
-       (number? (form-ref a 1))))
 
-(define (times-form? a)
-  (and (form? a)
-       (eq? (form-head a) 'Times)))
+;; (define (times-constant a)
+;;   (cond
+;;     [(> (form-length a) 0) (define r (form-ref a 1))
+;;                            (if (number? r)
+;;                                r
+;;                                1)]
+;;     [else 1]))
 
-(define (symbol->times-form x)
-  (make-form 'Times '() (vector 1 x)))
-
-(define (times-constant a)
-  (cond
-    [(> (form-length a) 0) (define r (form-ref a 1))
-                           (if (number? r)
-                               r
-                               1)]
-    [else 1]))
-      
+;; (define (times-by-form? a b) ; is a = (Times number b)
+;;   ; b is a symbol
+;;   (and (form? a)
+;;        (eq? (form-head a) 'Times)
+;;        (= (form-length a) 2)
+;;        (eq? (form-ref a 2) b)
+;;        (number? (form-ref a 1))))
 
 (define-command Order #:attributes '(Protected)
   (let ()
+    ; The following Times-related functions are used
+    ; in order to sort a symbol x the same as Times[number,x].
+    (define (times-form? a)
+      (and (form? a)
+           (eq? (form-head a) 'Times)))
+    (define (times? a)
+      (or (symbol? a)
+          (and (times-form? a)
+               (or (and (= (form-length a) 2)
+                        (number? (form-ref a 1))
+                        (symbol? (form-ref a 2)))
+                   (and (= (form-length a) 1)
+                        (or (number? (form-ref a 1))
+                            (symbol? (form-ref a 1))))))))
+    (define (times-variable? a)
+      (and (times? a)
+           (or (and (= (form-length a) 1)
+                    (or (symbol? (form-ref a 1))
+                        (number? (form-ref a 1))))
+               (and (= (form-length a) 2)
+                    (and (number? (form-ref a 1))
+                         (symbol? (form-ref a 2)))))))
+    (define (times-variable a)
+      (if (symbol? a)
+          a
+          (and (form? a)
+               (or (and (= (form-length a) 1)
+                        (symbol? (form-ref a 1))
+                        (form-ref a 1))
+                   (and (= (form-length a) 2)
+                        (number? (form-ref a 1))
+                        (symbol? (form-ref a 2))
+                        (form-ref a 2))))))
+    
+    (define (times-constant a)
+      (define res
+        (if (symbol? a)
+            1
+            (if (times-form? a)
+                (and (> (form-length a) 0)
+                     (if (number? (form-ref a 1))
+                         (form-ref a 1)
+                         1))
+                #f)))
+      (if (eq? res #f)
+          (begin
+            (displayln (list a res))
+            (error))
+          res))
+    (define (symbol->times-form x)
+      (make-form 'Times '() (vector #f 1 x)))
+
     (define the-form-order 100)
     (define type-order-ht
       (hasheq
@@ -536,12 +705,16 @@
                   [(2)   (StringOrder  a b)]
                   [(100) ; Symbols and forms both end up here
                    (cond
-                     ; note: (times-by-form? a b) ; is a = (Times number b)                     
-                     [(and (symbol? a) (symbol? b))           (SymbolOrder  a b)]
-                     [(and (symbol? a) (times-by-form? b a))  (NumberOrder 1 (times-constant b))] 
-                     [(and (symbol? a) (times-form? b))       (Order (symbol->times-form a) b)]   
-                     [(and (symbol? b) (times-by-form? a b))  (NumberOrder (times-constant a) 1)] 
-                     [(and (symbol? b) (times-form? a))       (Order a (symbol->times-form b))]   
+                     ; note: (times-by-form? a b) ; is a = (Times number b)
+                     ; symbol and Times[number, symbol] are treated the same
+                     [(and (times? a) (times? b)) (if (eq? (times-variable a) (times-variable b))
+                                                      (NumberOrder (times-constant a) (times-constant b))
+                                                      (SymbolOrder (times-variable a) (times-variable b)))]
+                     ;; [(and (symbol? a) (symbol? b))           (SymbolOrder  a b)]
+                     ;; [(and (symbol? a) (times-by-form? b a))  (NumberOrder 1 (times-constant b))] 
+                     ;; [(and (symbol? a) (times-form? b))       (Order (symbol->times-form a) b)]   
+                     ;; [(and (symbol? b) (times-by-form? a b))  (NumberOrder (times-constant a) 1)] 
+                     ;; [(and (symbol? b) (times-form? a))       (Order a (symbol->times-form b))]   
                      [else                                    (FormOrder a b)])]
                   [else  (error 'Order "internal error")])])]
         [else form]))))
@@ -552,37 +725,31 @@
 ;   In that case, the arguments are sorted and the head is kept.
 (define-command Sort #:attributes '(Protected)
   (λ (orig-form)
-    (case (form-length orig-form)
-      [(1) (define form (form-ref orig-form 1))
-           (cond
-             [(form? form) (Sort form Order)]
-             [else          orig-form])]
-      [(2) (define form (form-ref orig-form 1))
-           (define p    (form-ref orig-form 2))
-           (cond
-             [(form? form)
-              (define parts (vector-copy (form-parts form)))
-              (vector-sort! parts (λ (f1 f2) (case (p f1 f2) [(1 #t) #t] [else #f]))
-                            1)
-              (make-form (form-head form) '() parts)]
-             [else orig-form])]
+    (define (do-sort form p)
+      (cond
+        [(form? form)
+         (define parts (vector-copy (form-parts form)))
+         (vector-sort! parts  (λ (f1 f2) (case (p f1 f2) [(1 #t) #t] [else #f]))  1)
+         (make-form (form-head form) '() parts)]
+        [else orig-form]))
+
+    (match-parts orig-form
+      [( (form: list)   )  (do-sort list Order)]
+      [( (form: list) p )  (do-sort list p)]
       [else orig-form])))
 
 
 (define-command Rule #:attributes '(Protected SequenceHold)
   (λ (form)
-    (case (form-length form)
-      [(2)   (define lhs (form-ref form 1))
-             (define rhs (form-ref form 2))
-             (Form 'Rule (list lhs rhs))]
-      [else  form])))
+    (match-parts form
+      [(lhs rhs) (Form 'Rule (list lhs rhs))]
+      [else      form])))
 
 
 (define-command ListQ #:attributes '(Protected)
   (λ (form)
-    (case (form-length form)
-      [(1)  (define x (form-ref form 1))
-            (eq? (Head x) 'List)]
+    (match-parts form
+      [(x)  (eq? (Head x) 'List)]
       [else form])))
 
 
@@ -635,7 +802,7 @@
                                                     (cdr exprs))])]                  
                       ; default is to evaluate all arguments in order
                       [else (map Eval exprs)]))
-                  (displayln (list 'evaluated-exprs evaluated-exprs)) 
+                  ; (displayln (list 'evaluated-exprs evaluated-exprs)) 
                   ; 4. Flatten any arguments of the form Sequence[e₁,...]
                   (define sequence-flattened-parts
                     (let ()
@@ -650,7 +817,7 @@
                       (if (memq 'SequenceHold attributes)
                           evaluated-exprs
                           (build evaluated-exprs '()))))
-                  (displayln (list 'sequence-flattened-parts sequence-flattened-parts))
+                  ; (displayln (list 'sequence-flattened-parts sequence-flattened-parts))
                   ; 5. If h has the attribute 'Flat, flatten subexpressions with head h
                   (define flat-flattened-parts
                     (let ()
@@ -667,22 +834,22 @@
                       (if (memq 'Flat attributes)
                           (build sequence-flattened-parts '())
                           sequence-flattened-parts)))
-                  (displayln (list 'flat-flattened-parts flat-flattened-parts))
+                  ; (displayln (list 'flat-flattened-parts flat-flattened-parts))
                   ; 6. Reconstruct the form
                   (define new-form (let ()
                                      (define new (Form h (form-attributes form) flat-flattened-parts))
                                      (if (equal? new form) form new)))
-                  (displayln (list 'new-form (FullForm new-form) (eq? form new-form)))
+                  ; (displayln (list 'new-form (FullForm new-form) (eq? form new-form)))
                   ; (displayln (list 'new-form (FullForm new-form)))
                   ; 7. If h has the attribute 'Listable, thread
-                  (displayln (list 'attributes attributes (and (memq 'Listable attributes) #t)))
+                  ; (displayln (list 'attributes attributes (and (memq 'Listable attributes) #t)))
                   (define threaded-form
                     (cond
                       [(memq 'Listable attributes)  (if (> (form-length new-form) 0)
                                                         (do-thread2 new-form new-form 'List)
                                                         new-form)]
                       [else new-form]))
-                  (displayln (list 'threaded-form (FullForm threaded-form) (eq? form threaded-form)))
+                  ; (displayln (list 'threaded-form (FullForm threaded-form) (eq? form threaded-form)))
                   ; (define threaded-form new-form)
                   (cond
                     [(not (eq? new-form threaded-form)) threaded-form]
@@ -694,13 +861,13 @@
                           (define new-sorted (Sort new-form))
                           (if (equal? new-sorted form) form new-sorted)]
                          [else new-form]))
-                     (displayln (list 'sorted-form (FullForm sorted-form) (eq? form sorted-form)))
+                     ; (displayln (list 'sorted-form (FullForm sorted-form) (eq? form sorted-form)))
                      ; 9. If h is a builtin, we call it.
                      (let ()
                        (define proc (get-builtin h))                       
                        (cond
                          [proc (define result (proc sorted-form))
-                               (displayln (list 'proc proc (FullForm result)))
+                               ; (displayln (list 'proc proc (FullForm result)))
                                result]
                          [else sorted-form]))])]))
 
@@ -721,10 +888,9 @@
 ;   Is the head of `expr` the symbol 'Missing?
 (define-command MissingQ #:attributes '(Protected)
   (λ (form)
-    (case (form-length form)
-      [(1) (define expr (form-ref form 1))
-           (eq? (Head expr) 'Missing)]
-      [else form])))
+    (match-parts form
+      [(expr) (eq? (Head expr) 'Missing)]
+      [else   form])))
 
 
 (define-command Sequence #:attributes '(Protected)
@@ -741,29 +907,27 @@
 ;   Analogy: append*
 (define-command Catenate #:attributes '(Protected)
   (λ (form)
-    (define (non-missing? x) (not (MissingQ x)))
-    (case (form-length form)
-      [(1) (define exprs (form-ref form 1))           
-           (define (non-missing? x) (or (not (form? x)) (not (MissingQ x))))
-           (cond
-             [(list-form? exprs)
-              (case (form-length exprs)
-                [(1) (define e1 (form-ref exprs 1))
-                     (define missing-count (for/sum ([e (in-elements e1)])
-                                             (if (MissingQ e) 1 0)))
-                     (cond
-                       [(> missing-count 0)  (define parts
-                                               (for/parts #:length (- (Length e1) missing-count)
-                                                          ([e (in-elements e1)]
-                                                           #:unless (MissingQ e))
-                                                 e))
-                                             (make-form 'List '() parts)]
-                       [else e1])]
-                [else (define parts (for/parts([e (in-elements* (filter non-missing? (form-elements exprs)))]
-                                               #:unless (MissingQ e))
-                                      e))
-                      (make-form 'List '() parts)])]
-             [else form])]
+    (define (non-missing? x) (not (has-head? x 'Missing)))
+    (match-parts form
+      [(exprs) (cond
+                 [(list-form? exprs)
+                  (case (form-length exprs)
+                    [(1) (define e1 (form-ref exprs 1))
+                         (define missing-count (for/sum ([e (in-elements e1)])
+                                                 (if (MissingQ e) 1 0)))
+                         (cond
+                           [(> missing-count 0)  (define parts
+                                                   (for/parts #:length (- (Length e1) missing-count)
+                                                              ([e (in-elements e1)]
+                                                               #:unless (MissingQ e))
+                                                     e))
+                                                 (make-form 'List '() parts)]
+                           [else e1])]
+                    [else (define parts (for/parts([e (in-elements* (filter non-missing? (form-elements exprs)))]
+                                                   #:unless (MissingQ e))
+                                          e))
+                          (make-form 'List '() parts)])]
+                 [else form])]
       ; default
       [else form])))
 
@@ -797,30 +961,27 @@
             (cond
               [same-heads?
                (define total-len (apply + (map Length (cons expr1 exprs))))
-               (define parts     (for/parts #:length (+ total-len 1)
-                                            ([x (in-elements* (cons expr1 exprs))])
+               (define parts     (for/parts #:length total-len
+                                   ([x (in-elements* (cons expr1 exprs))])
                                    x))
                (make-form head1 '() parts)]
               ; Not all heads were the same
               [else
                form])])))
 
+; Append[expr,elem]    append `elem` to `expr` - i.e. add a new last element to `expr`
+; Append[elem]         operator version, when applied it will append `elem`
 (define-command Append #:attributes '(Protected)
   (λ (form)
-    (case (form-length form)
-      [(2)  (define expr (form-ref form 1))
-            (define elem (form-ref form 2))
-            (cond
-              [(form? expr) (define n     (Length expr))
-                            (define parts (for/parts #:length (+ n 2)
-                                                      ([x (in-sequences                                                           
-                                                           (in-elements expr)
-                                                           (in-value    elem))])
-                                            x))
-                            (make-form (Head expr) '() parts)]
-              [else         (begin
-                              ; TODO - warning here
-                              form)])]
+    (match-parts form
+      [((form: expr) elem) (define n     (form-length expr))
+                           (define parts (for/parts #:length (+ n 1)
+                                           ([x (in-sequences (in-elements expr)
+                                                             (in-value    elem))])
+                                           x))
+                           (make-form (form-head expr) '() parts)]
+      [(atom elem)         (begin ; TODO - warning here
+                             form)]
       [else form])))
 
 
@@ -830,64 +991,45 @@
 ;   Operator version. The operator will prepend `elem` when applied.
 (define-command Prepend #:attributes '(Protected)
   (λ (form)
-    (case (form-length form)
-      [(2)  (define expr (form-ref form 1))
-            (define elem (form-ref form 2))
-            (cond
-              [(form? expr) (define n     (Length expr))
-                            (define parts (for/parts #:length (+ n 2)
-                                                     ([x (in-sequences    
-                                                          (in-value    elem)
-                                                          (in-elements expr))])
+    (match-parts form
+      [((form: expr) elem)  (define n     (Length expr))
+                            (define parts (for/parts #:length (+ n 1)
+                                            ([x (in-sequences (in-value    elem)
+                                                              (in-elements expr))])
                                             x))
-                            (make-form (Head form) '() parts)]
-              [else         (begin
-                              ; TODO - warning here
-                              form)])]
-      [else form])))
+                            (make-form (form-head expr) '() parts)]
+      [(atom elem)          form]   ; TODO - warning here
+      [else                 form])))
 
 ; Insert[list, elem, n]
 ;   Insert the element `elem` in the list `list` so it have position `n`.
 (define-command Insert #:attributes '(Protected)
-  (λ (form)
-    (case (form-length form)
-      [(3)  (define list (form-ref form 1))
-            (define elem (form-ref form 2))
-            (define n    (form-ref form 3))
+  (let ()
+    (define (do-insert orig-form list elem n)
+      (define l (form-length list))
+      (cond
+        [(<= 1 n (+ l 1))
+         (define parts (for/parts #:length (+ l 1)
+                         ([x (in-sequences                                                          
+                              (in-elements list 1 (- n 1))
+                              (in-value    elem)
+                              (in-elements list n l))])
+                         x))
+         (make-form (form-head list) '() parts)]
+        [else
+         ; TODO - warn n out of bounds
+         orig-form]))
+    
+    (λ (form)
+      (match-parts form
+        [((form: list) elem (integer: n))
+         (cond
+           [(= n 0)      form] ; TODO - warning here
+           [(< n 0)      (define l (Length form))
+                         (do-insert form list elem (+ l n 2))]           
+           [else         (do-insert form list elem n)])]
+        [else form]))))
 
-            ; (displayln `(list ,list elem ,elem n ,n))
-            
-            (cond
-              [(exact-integer? n)
-               (cond
-                 [(= n 0)      (begin
-                                 ; TODO - warning
-                                 form)]
-                 
-                 [(< n 0)      (define l (Length form))
-                               (Insert form elem (+ l n 2))]
-                 
-                 [(form? form) (define l  (Length list))
-                               (cond
-                                 [(<= 1 n (+ l 1))
-                                  (define parts (for/parts #:length (+ l 2)
-                                                           ([x (in-sequences                                                          
-                                                                (in-elements list 1 (- n 1))
-                                                                (in-value    elem)
-                                                                (in-elements list n l))])
-                                                  x))
-                                  (displayln parts)
-                                  (make-form (Head list) '() parts)]
-                                 [else
-                                  (begin
-                                    ; TODO - warn n out of bounds
-                                    form)])]
-                 
-                 [else         (begin
-                                 ; TODO - warning here
-                                 form)])]
-              [else form])]
-      [else form])))
 
 (define (all-equal? xs)
   (cond
@@ -897,8 +1039,6 @@
                       (define (is-x0? x) (equal? x x0))
                       (andmap is-x0? (cdr xs))]))
 
-    
-
 ; Thread[f[args]]
 ; Thread[f[args], h]
 ;   Note: Since threading is needed inside `Eval` we implement
@@ -907,21 +1047,18 @@
   (λ (form)
     ; This handles the case: Thread[f[args], h]
     ; The form orig-form is returned, if nothing can be done.
-    (case (form-length form)
-      [(1)  (do-thread2 form (form-ref form 1) 'List)]
-      [(2)  (do-thread2 form (form-ref form 1) (form-ref form 2))]
-      [else form])))
+    (match-parts form
+      [(args)   (do-thread2 form args 'List)]
+      [(args h) (do-thread2 form args h)]
+      [else     form])))
 
-(define (do-thread2 orig-form f-args head)
+
+(define (do-thread2 orig-form f-args h)
   ; (displayln `(do-thread2 ,(FullForm orig-form) ,(FullForm f-args) ,head))
-  (cond
-    [(atom? f-args) orig-form]
-    [(form? f-args)
-     (define f      (form-head f-args))
-     (define args   (form-ref f-args 1))
+  (match f-args
+    [(atom: _) orig-form]
 
-     (define h      (or head (form-ref form 2)))
-     
+    [(form: (f args))
      ; 1. Determine the length of arguments with head h.
      ;    To thread, these must all have the same length.
      (define h-indices (for/list ([i   (in-naturals 1)]
@@ -944,6 +1081,7 @@
                                                     (if (has-head? arg h)
                                                         (form-ref arg i)
                                                         arg)))))])]
+
     [else (error 'Thread "internal error, got non-expression")]))
 
 
@@ -1047,7 +1185,16 @@
 (define-command Plus #:attributes '(Flat Listable NumericFunction OneIdentity Orderless Protected)
   (λ (form)
     (displayln (FullForm form))
-  ;; ; count how many times x0 occurs in the beginning of xs
+    ;; ; count how many times x0 occurs in the beginning of xs
+    ;; (define (same? x y)
+    ;;   ; the conmplication is that x and 3*x are to collected.
+    ;;   (cond
+    ;;     [(and (symbol? x) (symbol? y))     (eq? x y)]
+    ;;     [(and (symbol? x) (times-by? x y)) #t]
+    ;;     [(symbol? x)                       #f]
+    ;;     [(symbol? y)      (times-by? y x)  #t]
+    ;;     [else             
+          
   (define (count-same x0 xs)
     (cond
       [(null? xs)            0]
@@ -1113,15 +1260,9 @@
 
 
 
-(define (FullForm expr)
-  (cond
-    [(atom? expr) expr]
-    [(form? expr) (cons (FullForm (form-head expr))
-                        (map FullForm (form-elements expr)))]
-    [else
-     (list 'RACKET expr)]))
 
 
+#;(
 
 
 (List 1 2 3) 
@@ -1198,3 +1339,6 @@
 ; TODO - 
 ;; > (FullForm (Plus 'x 'x (Times 3 'x)))
 ;; '(Plus (Times 2 x) (Times 3 x))
+
+
+)
