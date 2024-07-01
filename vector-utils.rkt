@@ -1,7 +1,9 @@
 #lang racket/base
 (provide
- span-indices    ; Computes spans of vector where the elements are the same according to a predicate.
- collect-vector) ; Collects elements into a vector.
+ vector-index-where              ; Like (index-where lst proc) but for vectors.
+ vector-index-where-prefix-ends  ; 
+ span-indices                    ; Computes spans of vector where the elements are the same according to a predicate.
+ collect-vector)                 ; Collects elements into a vector.
  
 
 ;;;
@@ -9,6 +11,33 @@
 ;;; 
 
 ;; This file contains general utilities for working with Racket vectors.
+
+;;;
+;;; Index related
+;;;
+
+; (vector-index-where vec proc)
+;   Like (index-where lst proc) but for vectors.
+(define (vector-index-where proc vec [start 0])
+  (for/first ([x (in-vector vec)]
+              [i (in-naturals start)]
+              #:when (proc x))
+    i))
+
+;;;
+;;; Prefixes
+;;; 
+
+; (vector-index-where-prefix-ends vec proc)
+;   The vector `vec` has a prefix of elements that fulfill `proc`.
+;   Return the index where the prefix ends.
+(define (vector-index-where-prefix-ends proc vec [start 0] [end (vector-length vec)] [step 1])
+  (or (for/first ([x (in-vector vec start end step)]
+                  [i (in-naturals start)]
+                  #:when (not (proc x)))
+        (+ start (* (- i start) step)))
+      end))
+
 
 ;;;
 ;;; Partitioning

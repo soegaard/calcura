@@ -1206,9 +1206,6 @@
 
 
 
-
-
-
 ; Plus[expr, ...]
 ;   The operation has attributes Flat, Orderless, and, OneIdentity.
 ;   This means, the evaluation loop will:
@@ -1222,20 +1219,18 @@
   (λ (form)
     ; (displayln (FullForm form))
     (define (same? x y)
-      ; the complication is that x and 3*x are to collected.
-      (cond
-        [(and (symbol? x) (symbol? y))     (eq? x y)]
-        [(and (symbol? x) (times-by? x y)) #t]
-        [(symbol? x)                       #f]
-        [(symbol? y)      (times-by? y x)  #t]
-        [else             #f]))
-
-    ; count how many times x0 occurs in the beginning of xs    
-    (define (count-same x0 xs)
-      (cond
-        [(null? xs)            0]
-        [(equal? (car xs) x0)  (+ 1 (count-same x0 (cdr xs)))]
-        [else                  0]))
+      ; The complication is that x and 3*x must be collected into one term.
+      (match* (x y)
+        ; First argument is a symbol
+        [((symbol: x) (symbol: x))                                             #t]
+        [((symbol: _) (symbol: _))                                             #f]
+        [((symbol: x) (form: (Times _ x)))                                     #t]
+        [((symbol: _) _)                                                       #f]
+        ; First argument is a Times-form.
+        [((form: (Times (number: _) x ...)) (form: (Times (number: _) x ...))) #t]
+        [((form: (Times (number: _) x ...)) (form: (Times x ...)))             #t]
+        [((form: (Times x ...))             (form: (Times x ...)))             #t]
+        [(_ _)                                                                 #f]))
 
     (match-parts form
       ; Plus[] = 0
@@ -1247,26 +1242,22 @@
        (define parts         (form-parts form))
        (define end           (vector-length parts))
        ; index of first non-number
-       (define number-end    (let loop ([i 1])
-                               (cond
-                                 [(< i end) (if (number? (vector-ref parts i))
-                                                (loop (+ i 1))
-                                                i)]
-                                 [else    i])))
+       (define number-end    (vector-index-where-prefix-ends number? parts 1))
        ; sum numbers in prefix
        (define sum           (for/sum  ([x (in-vector parts 1 number-end)]) x))
-
-       ; We collect like terms into a single Times-form.
+       ;; It's now time to collect like terms into a single Times-form.
        ; Partition the terms into spans of like terms.
        (define others        (span-indices parts number-end same?))
        (define n             (length others))
-
+       
        (define (sum-span vec span)
          ; span = (cons span-start span-length)
          (define span-start  (car span))
          (define span-length (cdr span))
-         (define coef (for/fold ([sum 0]) ([i (in-range span-start (+ span-start span-length))])
-                        (+ sum (times-coefficient (vector-ref vec i)))))
+         (define coef        (if (= span-length 1) ; fast path
+                                 (times-coefficient (vector-ref vec span-start))
+                                 (for/fold ([sum 0]) ([i (in-range span-start (+ span-start span-length))])
+                                   (+ sum (times-coefficient (vector-ref vec i))))))
          (times-replace-coefficient (vector-ref vec span-start) coef))
        
        (define result-parts  (collect-vector #:length (if (exact-zero? sum) n (+ n 1))
@@ -1382,5 +1373,7 @@
 ;; > (FullForm (Plus 'x 'x (Times 3 'x)))
 ;; '(Plus (Times 2 x) (Times 3 x))
 
+(FullForm (Eval (Plus 3 (Times 4 'x 'y) (Times 5 'x 'y))))
+'(Plus 3 (Times 4 x y) (Times 5 x y))
 
 )
