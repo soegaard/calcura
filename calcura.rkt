@@ -4,7 +4,8 @@
          racket/match
          racket/vector
          racket/sequence
-         "for-parts.rkt")
+         "for-parts.rkt"
+         "vector-utils.rkt")
 
 (require (for-syntax syntax/for-body syntax/parse racket/syntax racket/base)
          syntax/parse/define)
@@ -339,7 +340,7 @@
          (unless (form? form-val)
            (raise-syntax-error 'match-form (~a "expected form, got: " form-val)))
          (match form-val
-           [(form _ _ (vector #f elem-pat ...)) . more]
+           [(form _ _ (vector _ elem-pat ...)) . more]
            ...
            [_ (raise-syntax-error 'match-parts (~a "no matching clause for " form-val))])))]
     [(_match-parts form-expr [(elem-pat ...) . more] ... [else . more-else])
@@ -348,7 +349,7 @@
          (unless (form? form-val)
            (raise-syntax-error 'match-form (~a "expected form, got: " form-val)))
          (match form-val
-           [(form _ _ (vector #f elem-pat ...)) . more]
+           [(form _ _ (vector _ elem-pat ...)) . more]
            ...
            [_ . more-else])))]))
 
@@ -371,7 +372,10 @@
                          [symbol:   symbol?]
                          [atom:     atom?]
                          [boolean:  boolean?]
-                         [string:   string?]))
+                         [string:   string?]
+                         [number:   number?]))
+
+(define (exact-zero? x) (and (number? x) (exact? x) (zero? x)))
 
 ; (form: _)                      match any form
 ; (form: x)                      match any form, bind it to x
@@ -388,7 +392,14 @@
 (define-match-expander parts:
   (λ (stx)
     (syntax-case stx ()
-      [(_parts: name)                  (syntax/loc stx (and (? form?) (app (λ (x) (form-parts x)) name)))])))
+      [(_parts: name)                   (syntax/loc stx (and (? form?) (app (λ (x) (form-parts x)) name)))])))
+
+(define-match-expander elements:
+  (λ (stx)
+    (syntax-case stx ()
+      [(_elements: elm-pat ...)         (syntax/loc stx (and (? form?) 
+                                                             (app (λ (x) (form-parts x)) 
+                                                                  (vector #f elm-pat ...))))])))
 
 
 
@@ -562,57 +573,80 @@
 ;;        (eq? (form-ref a 2) b)
 ;;        (number? (form-ref a 1))))
 
+(define (times-form? a)
+  (and (form? a)
+       (eq? (form-head a) 'Times)))
+
+(define (times? a)
+  ; Is `a` of the form
+  ;  - symbol
+  ;  - Times[number, symbol]
+  ;  - Times[number]          // Note:  should reduce to `number`
+  ;  - Times[symbol]
+  (or (symbol? a)
+      (and (times-form? a)
+           (or (and (= (form-length a) 2)
+                    (number? (form-ref a 1))
+                    (symbol? (form-ref a 2)))
+               (and (= (form-length a) 1)
+                    (or (number? (form-ref a 1))
+                        (symbol? (form-ref a 1))))))))
+(define (times-variable? a)
+  (and (times? a)
+       (or (and (= (form-length a) 1)
+                (symbol? (form-ref a 1)))
+           (and (= (form-length a) 2)
+                (and (number? (form-ref a 1))
+                     (symbol? (form-ref a 2)))))))
+(define (times-variable a)
+  (if (symbol? a)
+      a
+      (and (form? a)
+           (or (and (= (form-length a) 1)
+                    (symbol? (form-ref a 1))
+                    (form-ref a 1))
+               (and (= (form-length a) 2)
+                    (number? (form-ref a 1))
+                    (symbol? (form-ref a 2))
+                    (form-ref a 2))))))
+
+(define (times-coefficient a)
+  (define res
+    (if (symbol? a)
+        1
+        (if (times-form? a)
+            (and (> (form-length a) 0)
+                 (if (number? (form-ref a 1))
+                     (form-ref a 1)
+                     1))
+            #f)))
+  (if (eq? res #f)
+      (begin
+        (displayln (list a res))
+        (error 'times-coefficient (~a a)))
+      res))
+
+(define (times-by? a b) ; is a = (Times number b)
+  (and (times? b)
+       (eq? (times-variable b) a)))
+
+(define (times-replace-coefficient term coef)
+  (match* (coef term)
+    [(1 (symbol: sym))                 sym]
+    [(_ (symbol: sym))                 (make-form 'Times '() (vector #f coef sym))]
+    [(_ (elements: (number: _) _ ...)) (define new-parts (vector-set/copy (form-parts term) 1 coef))
+                                       (make-form 'Times '() new-parts)]
+    [(_ _)                             (define parts (form-parts term))
+                                       (define n     (vector-length parts))
+                                       (define new-parts (make-vector (+ n 1)))
+                                       (vector-set! new-parts 1 coef)
+                                       (vector-copy! new-parts 2 parts 1)
+                                       (make-form 'Times '() new-parts)]))
+
 (define-command Order #:attributes '(Protected)
   (let ()
     ; The following Times-related functions are used
     ; in order to sort a symbol x the same as Times[number,x].
-    (define (times-form? a)
-      (and (form? a)
-           (eq? (form-head a) 'Times)))
-    (define (times? a)
-      (or (symbol? a)
-          (and (times-form? a)
-               (or (and (= (form-length a) 2)
-                        (number? (form-ref a 1))
-                        (symbol? (form-ref a 2)))
-                   (and (= (form-length a) 1)
-                        (or (number? (form-ref a 1))
-                            (symbol? (form-ref a 1))))))))
-    (define (times-variable? a)
-      (and (times? a)
-           (or (and (= (form-length a) 1)
-                    (or (symbol? (form-ref a 1))
-                        (number? (form-ref a 1))))
-               (and (= (form-length a) 2)
-                    (and (number? (form-ref a 1))
-                         (symbol? (form-ref a 2)))))))
-    (define (times-variable a)
-      (if (symbol? a)
-          a
-          (and (form? a)
-               (or (and (= (form-length a) 1)
-                        (symbol? (form-ref a 1))
-                        (form-ref a 1))
-                   (and (= (form-length a) 2)
-                        (number? (form-ref a 1))
-                        (symbol? (form-ref a 2))
-                        (form-ref a 2))))))
-    
-    (define (times-constant a)
-      (define res
-        (if (symbol? a)
-            1
-            (if (times-form? a)
-                (and (> (form-length a) 0)
-                     (if (number? (form-ref a 1))
-                         (form-ref a 1)
-                         1))
-                #f)))
-      (if (eq? res #f)
-          (begin
-            (displayln (list a res))
-            (error))
-          res))
     (define (symbol->times-form x)
       (make-form 'Times '() (vector #f 1 x)))
 
@@ -708,8 +742,8 @@
                      ; note: (times-by-form? a b) ; is a = (Times number b)
                      ; symbol and Times[number, symbol] are treated the same
                      [(and (times? a) (times? b)) (if (eq? (times-variable a) (times-variable b))
-                                                      (NumberOrder (times-constant a) (times-constant b))
-                                                      (SymbolOrder (times-variable a) (times-variable b)))]
+                                                      (NumberOrder (times-coefficient a) (times-coefficient b))
+                                                      (SymbolOrder (times-variable    a) (times-variable    b)))]
                      ;; [(and (symbol? a) (symbol? b))           (SymbolOrder  a b)]
                      ;; [(and (symbol? a) (times-by-form? b a))  (NumberOrder 1 (times-constant b))] 
                      ;; [(and (symbol? a) (times-form? b))       (Order (symbol->times-form a) b)]   
@@ -760,6 +794,7 @@
 (define (Eval expr)
   ; Loop until we find a fix-point or the limit is reached
   (let loop ([i 0] [expr expr])
+    ; (displayln (list 'Eval: (FullForm expr)))
     (define expr1 (Eval1 expr))
     (cond
       [(eq? expr1 expr)      expr]
@@ -870,8 +905,6 @@
                                ; (displayln (list 'proc proc (FullForm result)))
                                result]
                          [else sorted-form]))])]))
-
-
 
 
 ; Missing[]
@@ -1082,7 +1115,7 @@
                                                         (form-ref arg i)
                                                         arg)))))])]
 
-    [else (error 'Thread "internal error, got non-expression")]))
+    [else orig-form]))
 
 
 ; Power[x,y]
@@ -1172,6 +1205,10 @@
        result])))
 
 
+
+
+
+
 ; Plus[expr, ...]
 ;   The operation has attributes Flat, Orderless, and, OneIdentity.
 ;   This means, the evaluation loop will:
@@ -1181,31 +1218,30 @@
 ;   Since the arguments are sorted, we can assume the numbers
 ;   are at the beginning.
 
-
 (define-command Plus #:attributes '(Flat Listable NumericFunction OneIdentity Orderless Protected)
   (λ (form)
-    (displayln (FullForm form))
-    ;; ; count how many times x0 occurs in the beginning of xs
-    ;; (define (same? x y)
-    ;;   ; the conmplication is that x and 3*x are to collected.
-    ;;   (cond
-    ;;     [(and (symbol? x) (symbol? y))     (eq? x y)]
-    ;;     [(and (symbol? x) (times-by? x y)) #t]
-    ;;     [(symbol? x)                       #f]
-    ;;     [(symbol? y)      (times-by? y x)  #t]
-    ;;     [else             
-          
-  (define (count-same x0 xs)
-    (cond
-      [(null? xs)            0]
-      [(equal? (car xs) x0)  (+ 1 (count-same x0 (cdr xs)))]
-      [else                  0]))
+    ; (displayln (FullForm form))
+    (define (same? x y)
+      ; the complication is that x and 3*x are to collected.
+      (cond
+        [(and (symbol? x) (symbol? y))     (eq? x y)]
+        [(and (symbol? x) (times-by? x y)) #t]
+        [(symbol? x)                       #f]
+        [(symbol? y)      (times-by? y x)  #t]
+        [else             #f]))
 
-    (case (form-length form)
+    ; count how many times x0 occurs in the beginning of xs    
+    (define (count-same x0 xs)
+      (cond
+        [(null? xs)            0]
+        [(equal? (car xs) x0)  (+ 1 (count-same x0 (cdr xs)))]
+        [else                  0]))
+
+    (match-parts form
       ; Plus[] = 0
-      [(0)  0]
+      [()  0]
       ; Plus[expr] = expr
-      [(1)  (form-ref form 1)]
+      [(expr)  expr]
       ; Plus[expr₁, ...]
       [else
        (define parts         (form-parts form))
@@ -1217,25 +1253,31 @@
                                                 (loop (+ i 1))
                                                 i)]
                                  [else    i])))
-       (define sum           (for/sum  ([x (in-vector parts 1 number-end)])   x))
-       (define other         (for/list ([x (in-vector parts number-end end)]) x))
+       ; sum numbers in prefix
+       (define sum           (for/sum  ([x (in-vector parts 1 number-end)]) x))
 
-       (define result  (let loop ([terms '()]
-                                  [exprs other])
-                         (cond
-                           [(null? exprs) (define ts (reverse terms))
-                                          (define all (if (= sum 0) ts (cons sum ts)))
-                                          (if (null? (cdr all))
-                                              (car all)
-                                              (Form 'Plus all))]
-                           [else          (define expr0 (car exprs))
-                                          (define i (count-same expr0 (cdr exprs)))
-                                          (cond
-                                            [(= i 0) (loop (cons expr0 terms)
-                                                           (cdr exprs))]
-                                            [else    (loop (cons (Times (+ i 1) expr0) terms)
-                                                           (drop (cdr exprs) i))])])))
-       result])))
+       ; We collect like terms into a single Times-form.
+       ; Partition the terms into spans of like terms.
+       (define others        (span-indices parts number-end same?))
+       (define n             (length others))
+
+       (define (sum-span vec span)
+         ; span = (cons span-start span-length)
+         (define span-start  (car span))
+         (define span-length (cdr span))
+         (define coef (for/fold ([sum 0]) ([i (in-range span-start (+ span-start span-length))])
+                        (+ sum (times-coefficient (vector-ref vec i)))))
+         (times-replace-coefficient (vector-ref vec span-start) coef))
+       
+       (define result-parts  (collect-vector #:length (if (exact-zero? sum) n (+ n 1))
+                               (λ (collect)
+                                 (collect #f) 
+                                 (unless (exact-zero? sum)
+                                   (collect sum))
+                                 (for ([span (in-list others)])
+                                   (collect (sum-span parts span))))))
+       
+       (make-form 'Plus '() result-parts)])))
 
 
 ; Minus[x]
