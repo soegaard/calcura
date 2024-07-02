@@ -5,10 +5,19 @@
          racket/vector
          racket/sequence
          "for-parts.rkt"
-         "vector-utils.rkt")
+         "vector-utils.rkt"
+         "match-utils.rkt")
 
 (require (for-syntax syntax/for-body syntax/parse racket/syntax racket/base)
          syntax/parse/define)
+
+;;;
+;;; Notes
+;;;
+
+;; The construct `in-sequences` has overhead.
+;; Look into ways of not using it.
+
 
 ;;;
 ;;; Attributes Table
@@ -70,6 +79,13 @@
 
 (define make-form form) ; extra constructor (used when `form` is shadowed
 
+;;; Atoms
+
+(define (atom? x)
+  (or (number? x)
+      (symbol? x)
+      (boolean? x)   ; Use 'True and 'False ?
+      (string? x)))
 
 ;;; We aim to make it easy to change the representation of forms.
 ;;; Therefore we introduce some helpers.
@@ -89,6 +105,13 @@
 (define (form-length expr)
   ; number of elements in the form
   (- (vector-length (form-parts expr)) 1))
+
+; parts is a vector of the form (vector #f expr ...)
+(define (parts-length parts) 
+  (- (vector-length parts) 1))
+
+(define (parts-ref parts i)
+  (vector-ref parts i))
 
 (define-syntax-rule (in-head expr)
   (in-value (Head expr)))
@@ -160,23 +183,126 @@
     [(null? (cdr forms)) (in-elements (car forms))]
     [else                (in-sequences (in-elements  (car forms))
                                        (in-elements* (cdr forms)))]))
-  
-;;; Atoms
 
-(define (atom? x)
-  (or (number? x)
-      (symbol? x)
-      (boolean? x)   ; Use 'True and 'False ?
-      (string? x)))
+;;;
+;;; match-form and match-parts
+;;;
+
+(define-syntax (match-form stx)
+  (syntax-case stx (else)
+    [(_match-form form-expr [(head-sym elem-pat ...) . more] ...)
+     (syntax/loc stx
+       (let ([form-val form-expr])
+         (unless (form? form-val)
+           (raise-syntax-error 'match-form (~a "expected form, got: " form-val)))
+         (match form-val
+           [(form 'head-sym _ (vector #f elem-pat ...)) . more]
+           ...
+           [_ (raise-syntax-error 'match-form (~a "no matching clause for " form-val))])))]
+    [(_match-form form-expr [(head-sym elem-pat ...) . more] ... [else . more-else])
+     (syntax/loc stx
+       (let ([form-val form-expr])
+         (unless (form? form-val)
+           (raise-syntax-error 'match-form (~a "expected form, got: " form-val)))
+         (match form-val
+           [(form 'head-sym _ (vector #f elem-pat ...)) . more]
+           ...
+           [_ . more-else])))]))
+
+(define-syntax (match-parts stx)
+  (syntax-case stx (else)
+    [(_match-parts form-expr [(elem-pat ...) . more] ...)
+     (syntax/loc stx
+       (let ([form-val form-expr])
+         (unless (form? form-val)
+           (raise-syntax-error 'match-form (~a "expected form, got: " form-val)))
+         (match form-val
+           [(form _ _ (vector _ elem-pat ...)) . more]
+           ...
+           [_ (raise-syntax-error 'match-parts (~a "no matching clause for " form-val))])))]
+    [(_match-parts form-expr [(elem-pat ...) . more] ... [else . more-else])
+     (syntax/loc stx
+       (let ([form-val form-expr])
+         (unless (form? form-val)
+           (raise-syntax-error 'match-form (~a "expected form, got: " form-val)))
+         (match form-val
+           [(form _ _ (vector _ elem-pat ...)) . more]
+           ...
+           [_ . more-else])))]))
+
+;;;
+;;; Match expanders
+;;;
+
+;; Example:
+;; > (match-form (List 1 2 3) [(List 1 2 3) 'yes])
+
+(define-syntax-rule
+  (define-match-expanders ([name: predicate] ...))
+  (begin
+    (define-match-expander name:
+      (λ (stx)
+        (syntax-case stx (_)
+          [(_name: _) (syntax/loc stx (? predicate))]
+          [(_name: x) (syntax/loc stx (? predicate x))])))
+    ...))
+
+(define (exact-zero? x) (and (number? x) (exact? x) (zero? x)))
+(define (exact-one? x)  (and (number? x) (exact? x) (= x 1)))
+
+(define-match-expanders ([integer:  exact-integer?]
+                         [rational: exact-rational?]
+                         [real:     real?]
+                         [complex:  complex?]
+                         [symbol:   symbol?]
+                         [atom:     atom?]
+                         [boolean:  boolean?]
+                         [string:   string?]
+                         [number:   number?]
+                         [zero:     exact-zero?]
+                         [one:      exact-one?]))
+
+; (form: _)                      match any form
+; (form: x)                      match any form, bind it to x
+; (form: x h)                    match any form with head h, bind it to x
+; (form: (head-sym elm-pat ...)) match a form with head `head-sym` and parts matching `elm-pat ...`.
+(define-match-expander form:
+  (λ (stx)
+    (syntax-case stx (_)
+      [(_form: (head-sym elm-pat ...)) (syntax/loc stx (form 'head-sym _ (vector #f elm-pat ...)))]
+      [(_form: _)                      (syntax/loc stx (? form?))]
+      [(_form: name)                   (syntax/loc stx (? form? name))]
+      [(_form: name head)              (syntax/loc stx (? (λ (x) (has-head? x head)) name))])))
+
+(define-match-expander parts:
+  (λ (stx)
+    (syntax-case stx ()
+      [(_parts: name)                   (syntax/loc stx (and (? form?) (app (λ (x) (form-parts x)) name)))])))
+
+(define-match-expander elements:
+  (λ (stx)
+    (syntax-case stx ()
+      [(_elements: elm-pat ...)         (syntax/loc stx (and (? form?) 
+                                                             (app (λ (x) (form-parts x)) 
+                                                                  (vector #f elm-pat ...))))])))
+
+; (head: h)  match any form and bind the head to h
+(define-match-expander head:
+  (λ (stx)
+    (syntax-case stx ()
+      [(_head: name)         (syntax/loc stx (and (? form?) 
+                                                  (app (λ (x) (form-head x)) 
+                                                       name)))])))
 
 ;;; Forms
 
-; Not a builtin.
-; Used to construct forms from arguments represented as Racket lists.
+; (Form head arguments)
+; (Form head attributes arguments)
+;    Used to construct forms from arguments represented as Racket lists.
+;    Note: Not a builtin. 
 (define Form
   (case-lambda
-    [(head arguments)
-     ; arguments is a Racket list
+    [(head arguments)           ; arguments is a Racket list     
      (Form head '() arguments)]
     [(head attributes arguments)
      (form head attributes (list->vector (cons #f arguments)))]))
@@ -310,97 +436,6 @@
       [(1)  (define expr (form-ref form 1))
             (atom? expr)]
       [else form])))
-
-(define-syntax (match-form stx)
-  (syntax-case stx (else)
-    [(_match-form form-expr [(head-sym elem-pat ...) . more] ...)
-     (syntax/loc stx
-       (let ([form-val form-expr])
-         (unless (form? form-val)
-           (raise-syntax-error 'match-form (~a "expected form, got: " form-val)))
-         (match form-val
-           [(form 'head-sym _ (vector #f elem-pat ...)) . more]
-           ...
-           [_ (raise-syntax-error 'match-form (~a "no matching clause for " form-val))])))]
-    [(_match-form form-expr [(head-sym elem-pat ...) . more] ... [else . more-else])
-     (syntax/loc stx
-       (let ([form-val form-expr])
-         (unless (form? form-val)
-           (raise-syntax-error 'match-form (~a "expected form, got: " form-val)))
-         (match form-val
-           [(form 'head-sym _ (vector #f elem-pat ...)) . more]
-           ...
-           [_ . more-else])))]))
-
-(define-syntax (match-parts stx)
-  (syntax-case stx (else)
-    [(_match-parts form-expr [(elem-pat ...) . more] ...)
-     (syntax/loc stx
-       (let ([form-val form-expr])
-         (unless (form? form-val)
-           (raise-syntax-error 'match-form (~a "expected form, got: " form-val)))
-         (match form-val
-           [(form _ _ (vector _ elem-pat ...)) . more]
-           ...
-           [_ (raise-syntax-error 'match-parts (~a "no matching clause for " form-val))])))]
-    [(_match-parts form-expr [(elem-pat ...) . more] ... [else . more-else])
-     (syntax/loc stx
-       (let ([form-val form-expr])
-         (unless (form? form-val)
-           (raise-syntax-error 'match-form (~a "expected form, got: " form-val)))
-         (match form-val
-           [(form _ _ (vector _ elem-pat ...)) . more]
-           ...
-           [_ . more-else])))]))
-
-;; Example:
-;; > (match-form (List 1 2 3) [(List 1 2 3) 'yes])
-
-(define-syntax-rule
-  (define-match-expanders ([name: predicate] ...))
-  (begin
-    (define-match-expander name:
-      (λ (stx)
-        (syntax-case stx ()
-          [(_name: x) (syntax/loc stx (? predicate x))])))
-    ...))
-
-(define-match-expanders ([integer:  exact-integer?]
-                         [rational: exact-rational?]
-                         [real:     real?]
-                         [complex:  complex?]
-                         [symbol:   symbol?]
-                         [atom:     atom?]
-                         [boolean:  boolean?]
-                         [string:   string?]
-                         [number:   number?]))
-
-(define (exact-zero? x) (and (number? x) (exact? x) (zero? x)))
-
-; (form: _)                      match any form
-; (form: x)                      match any form, bind it to x
-; (form: x h)                    match any form with head h, bind it to x
-; (form: (head-sym elm-pat ...)) match a form with head `head-sym` and parts matching `elm-pat ...`.
-(define-match-expander form:
-  (λ (stx)
-    (syntax-case stx (_)
-      [(_form: (head-sym elm-pat ...)) (syntax/loc stx (form 'head-sym _ (vector #f elm-pat ...)))]
-      [(_form: _)                      (syntax/loc stx (? form?))]
-      [(_form: name)                   (syntax/loc stx (? form? name))]
-      [(_form: name head)              (syntax/loc stx (? (λ (x) (has-head? x head)) name))])))
-
-(define-match-expander parts:
-  (λ (stx)
-    (syntax-case stx ()
-      [(_parts: name)                   (syntax/loc stx (and (? form?) (app (λ (x) (form-parts x)) name)))])))
-
-(define-match-expander elements:
-  (λ (stx)
-    (syntax-case stx ()
-      [(_elements: elm-pat ...)         (syntax/loc stx (and (? form?) 
-                                                             (app (λ (x) (form-parts x)) 
-                                                                  (vector #f elm-pat ...))))])))
-
 
 
 ; IMPORTANT
@@ -556,23 +591,6 @@
 ;  Rationale: This bring x and r*x next to each other.
 ;  Also note: This means the type order for symbols and forms must be the same.
 
-
-;; (define (times-constant a)
-;;   (cond
-;;     [(> (form-length a) 0) (define r (form-ref a 1))
-;;                            (if (number? r)
-;;                                r
-;;                                1)]
-;;     [else 1]))
-
-;; (define (times-by-form? a b) ; is a = (Times number b)
-;;   ; b is a symbol
-;;   (and (form? a)
-;;        (eq? (form-head a) 'Times)
-;;        (= (form-length a) 2)
-;;        (eq? (form-ref a 2) b)
-;;        (number? (form-ref a 1))))
-
 (define (times-form? a)
   (and (form? a)
        (eq? (form-head a) 'Times)))
@@ -591,6 +609,7 @@
                (and (= (form-length a) 1)
                     (or (number? (form-ref a 1))
                         (symbol? (form-ref a 1))))))))
+
 (define (times-variable? a)
   (and (times? a)
        (or (and (= (form-length a) 1)
@@ -598,6 +617,7 @@
            (and (= (form-length a) 2)
                 (and (number? (form-ref a 1))
                      (symbol? (form-ref a 2)))))))
+
 (define (times-variable a)
   (if (symbol? a)
       a
@@ -619,7 +639,7 @@
                  (if (number? (form-ref a 1))
                      (form-ref a 1)
                      1))
-            #f)))
+            1))) ; (Power x 3) has the coefficient 1
   (if (eq? res #f)
       (begin
         (displayln (list a res))
@@ -630,18 +650,25 @@
   (and (times? b)
        (eq? (times-variable b) a)))
 
-(define (times-replace-coefficient term coef)
+(define (term-replace-coefficient term coef)
   (match* (coef term)
-    [(1 (symbol: sym))                 sym]
-    [(_ (symbol: sym))                 (make-form 'Times '() (vector #f coef sym))]
-    [(_ (elements: (number: _) _ ...)) (define new-parts (vector-set/copy (form-parts term) 1 coef))
-                                       (make-form 'Times '() new-parts)]
-    [(_ _)                             (define parts (form-parts term))
-                                       (define n     (vector-length parts))
-                                       (define new-parts (make-vector (+ n 1)))
-                                       (vector-set! new-parts 1 coef)
-                                       (vector-copy! new-parts 2 parts 1)
-                                       (make-form 'Times '() new-parts)]))
+    ; todo: check whether the literal 1 matches 1.0
+    [(1 (symbol: sym))                     sym]
+    [(1 (form: (Times (number: _) _ ...))) (define new-parts (vector-set/copy (form-parts term) 1 coef))
+                                           (make-form 'Times '() new-parts)]
+    [(1 term)                              term]
+     
+    [(_ (symbol: sym))                     (make-form 'Times '() (vector #f coef sym))]    
+    [(_ (form: (Times (number: _) _ ...))) (define new-parts (vector-set/copy (form-parts term) 1 coef))
+                                           (make-form 'Times '() new-parts)]    
+    [(_ (form: (Times  _ ...)))            (define parts (form-parts term))
+                                           (define n     (vector-length parts))
+                                           (define new-parts (make-vector (+ n 1)))
+                                           (vector-set! new-parts 1 coef)
+                                           (vector-copy! new-parts 2 parts 1)
+                                           (make-form 'Times '() new-parts)]
+    [(_ term)                              (make-form 'Times '() (vector #f coef term))]
+    [(_ _)                                 (error 'term-replace-coefficient)]))
 
 (define-command Order #:attributes '(Protected)
   (let ()
@@ -1043,7 +1070,7 @@
       (cond
         [(<= 1 n (+ l 1))
          (define parts (for/parts #:length (+ l 1)
-                         ([x (in-sequences                                                          
+                         ([x (in-sequences
                               (in-elements list 1 (- n 1))
                               (in-value    elem)
                               (in-elements list n l))])
@@ -1122,10 +1149,11 @@
 ;   TODO - WIP
 (define-command Power #:attributes '(Listable NumericFunction OneIdentity Protected)
   (λ (form)
+    (displayln (FullForm form))
     (case (form-length form)
-      [(2)  (define x (form-ref form 1))
-            (define y (form-ref form 2))
-            (cond
+      [(2)   (define x (form-ref form 1))
+             (define y (form-ref form 2))
+             (cond
               ; x¹ = x 
               [(equal? y 1)                            x]              
               [(and (number? x) (number? y))           (expt x y)]
@@ -1155,54 +1183,95 @@
 ;   Since the arguments are sorted, we can assume the numbers
 ;   are at the beginning.
 
+
 (define-command Times #:attributes '(Flat Listable NumericFunction OneIdentity Orderless Protected)
   (λ (form)
-    ; count how many times x0 occurs in the beginning of xs
-    (define (count-same x0 xs)
-      (cond
-        [(null? xs)            0]
-        [(equal? (car xs) x0)  (+ 1 (count-same x0 (cdr xs)))]
-        [else                  0]))
+    (displayln (FullForm form))
+    (define (same? x y) ; check that x and y seen as powers have the same base
+      ; The complication is that x and x^2 must be collected into one factor.
+      (match* (x y)
+        ; Note: The (x x) only works if the attribute fields are the same
+        ; [(x x)                                                               #t]
+        ; First argument is a symbol
+        [((symbol: x) (symbol: x))                                             #t]
+        [((symbol: _) (symbol: _))                                             #f]
+        [((symbol: x) (form: (Power x (real: _))))                             #t]
+        [((symbol: _) _)                                                       #f]
+        ; First argument is a Times-form.
+        [((form: (Power x _)) (form: (Power x _)))                             #t]
+        ; First argument is a general form
+        [((and (head: h) (elements: x ...)) (and (head: h) (elements: x ...))) #t]  ; same as (x x) but ignores attributes
+        [(_ _)                                                                 #f]))
 
-    (case (form-length form)
+    (match-parts form
       ; Times[] = 1
-      [(0)  1]
+      [()  1]
       ; Times[expr] = expr
-      [(1)  (form-ref form 1)]
+      [(expr)  expr]
       ; Times[expr₁, ...]
       [else
        (define parts         (form-parts form))
        (define end           (vector-length parts))
        ; index of first non-number
-       (define number-end    (let loop ([i 1])
-                               (cond
-                                 [(< i end) (if (number? (vector-ref parts i))
-                                                (loop (+ i 1))
-                                                i)]
-                                 [else    i])))
-       (define product       (for/product ([x (in-vector parts 1 number-end)])   x))
-       (define other         (for/list    ([x (in-vector parts number-end end)]) x))
+       (define number-end    (vector-index-where-prefix-ends number? parts 1))
+       ; multiply numbers in prefix
+       (define product       (for/product  ([x (in-vector parts 1 number-end)]) x))
+       ;; It's now time to collect like factors into a single Power-form.
+       ; Partition the terms into spans of like terms.
+       (define others        (span-indices parts number-end same?))
+       (define n             (length others))
 
-       (define result  (cond
-                         ; 
-                         [(= product 0) (if (exact? product) 0 0.0)]
-                         [else
-                          (let loop ([factors '()]
-                                     [exprs   other])
-                            (cond
-                              [(null? exprs) (define fs (reverse factors))
-                                             (define all (if (= product 1) fs (cons product fs)))
-                                             (if (and (not (null? all)) (null? (cdr all)))
-                                                 (car all)
-                                                 (Form 'Times all))]
-                              [else          (define expr0 (car exprs))
-                                             (define i (count-same expr0 (cdr exprs)))
-                                             (cond
-                                               [(= i 0) (loop (cons expr0 factors)
-                                                              (cdr exprs))]
-                                               [else    (loop (cons (Power expr0 (+ i 1)) factors)
-                                                              (drop (cdr exprs) i))])]))]))
-       result])))
+       (displayln (list 'product product 'others others))
+       
+       (define (factor-exponent a)
+         (match a
+           ; a = a^1
+           [(form: (Power a r)) r]
+           [_                   1]))
+       (define (factor-base a)
+         (match a
+           [(form: (Power a r)) a]
+           [_                   a]))
+       (define (factor-replace-exponent power new-exponent)
+         (cond
+           [(exact-one? new-exponent) (match power
+                                        [(form: (Power a r)) a]
+                                        [_                   power])]
+           [else                      (match power
+                                        [(form: (Power a r)) (Power a     new-exponent)]
+                                        [_                   (Power power new-exponent)])]))
+       (define (multiply-span vec span)
+         ; span = (cons span-start span-length)
+         (define span-start  (car span))
+         (define span-length (cdr span))
+         (define span-end    (+ span-start span-length))
+         ; All factors in a span have the same base.
+         ; Add the exponents and keep the base.
+         (define exponent    (if (= span-length 1) ; fast path
+                                 (factor-exponent (vector-ref vec span-start))
+                                 (for/fold ([expo (factor-exponent (vector-ref vec span-start))])
+                                           ([i    (in-range (+ span-start 1) span-end)])
+                                   (Plus expo (factor-exponent (vector-ref vec i))))))
+         (factor-replace-exponent (vector-ref vec span-start) exponent))
+
+       (cond
+         ; no other factor than the numeric coefficient
+         [(null? others) product]
+         [else
+          (define result-parts  (collect-vector #:length (if (exact-one? product) n (+ n 1))
+                                                (λ (collect)
+                                                  (collect #f) 
+                                                  (unless (exact-one? product)
+                                                    (collect product))
+                                                  (for ([span (in-list others)])
+                                                    (collect (multiply-span parts span))))))
+          
+          ; Since Times[factor]=factor examine the number of parts here.
+          (displayln result-parts)
+          (case (parts-length result-parts)
+            [(0)  1]
+            [(1)  (parts-ref result-parts 1)]
+            [else (make-form 'Times '() result-parts)])])])))
 
 
 
@@ -1221,15 +1290,24 @@
     (define (same? x y)
       ; The complication is that x and 3*x must be collected into one term.
       (match* (x y)
+        ; Note: The (x x) only works if the attribute fields are the same
+        ; [(x x)                                                               #t]
         ; First argument is a symbol
         [((symbol: x) (symbol: x))                                             #t]
         [((symbol: _) (symbol: _))                                             #f]
         [((symbol: x) (form: (Times _ x)))                                     #t]
         [((symbol: _) _)                                                       #f]
         ; First argument is a Times-form.
-        [((form: (Times (number: _) x ...)) (form: (Times (number: _) x ...))) #t]
-        [((form: (Times (number: _) x ...)) (form: (Times x ...)))             #t]
-        [((form: (Times x ...))             (form: (Times x ...)))             #t]
+        [((form: (Times (number: _) ... x ...)) (form: (Times (number: _) ... x ...))) #t]
+        ; The rule above replaces the four below. If the invariant holds that
+        ; Times always reduces prefix numbers to a single number, so everything works.
+        ; [((form: (Times (number: _) x ...)) (form: (Times (number: _) x ...))) #t]
+        ; [((form: (Times             x ...)) (form: (Times             x ...))) #t]
+        ; [((form: (Times (number: _) x ...)) (form: (Times             x ...))) #t]
+        ; [((form: (Times             x ...)) (form: (Times (number: _) x ...))) #t]
+        
+        ; First argument is a general form
+        [((and (head: h) (elements: x ...)) (and (head: h) (elements: x ...))) #t]  ; same as (x x) but ignores attributes
         [(_ _)                                                                 #f]))
 
     (match-parts form
@@ -1258,17 +1336,24 @@
                                  (times-coefficient (vector-ref vec span-start))
                                  (for/fold ([sum 0]) ([i (in-range span-start (+ span-start span-length))])
                                    (+ sum (times-coefficient (vector-ref vec i))))))
-         (times-replace-coefficient (vector-ref vec span-start) coef))
-       
-       (define result-parts  (collect-vector #:length (if (exact-zero? sum) n (+ n 1))
-                               (λ (collect)
-                                 (collect #f) 
-                                 (unless (exact-zero? sum)
-                                   (collect sum))
-                                 (for ([span (in-list others)])
-                                   (collect (sum-span parts span))))))
-       
-       (make-form 'Plus '() result-parts)])))
+         (term-replace-coefficient (vector-ref vec span-start) coef))
+
+       (cond
+         ; no terms than the numeric constant term
+         [(null? others) sum]
+         [else
+          (define result-parts  (collect-vector #:length (if (exact-zero? sum) n (+ n 1))
+                                                (λ (collect)
+                                                  (collect #f) 
+                                                  (unless (exact-zero? sum)
+                                                    (collect sum))
+                                                  (for ([span (in-list others)])
+                                                    (collect (sum-span parts span))))))
+
+          ; Since Plus[term]=term examine the number of parts here.
+          (if (= (parts-length result-parts) 1)
+              (parts-ref result-parts 1)
+              (make-form 'Plus '() result-parts))])])))
 
 
 ; Minus[x]
@@ -1294,86 +1379,85 @@
 
 
 
+(list "Basic Tests"
+      (and  (equal? (FullForm (List 1 2 3))                           '(List 1 2 3))
+            (equal? (FullForm (Head (List 1 2 3)))                    'List)
+            (equal? (FullForm (List 1 2 'Nothing 3 4))                '(List 1 2 3 4))
+            (equal? (FullForm (List 1 2 (Nothing 3 4) 5 6))           '(List 1 2 5 6))
+            (equal? (FullForm (Head (Nothing 3 4)))                   'Symbol)
+            (equal? (FullForm (List 1 2 (Splice 3 4) 5 6))            '(List 1 2 3 4 5 6))
+            (equal? (FullForm (List 1 2 (Splice 3 (Splice 4 5) 6) 7)) '(List 1 2 3 4 5 6 7))
+            
+            (equal? (Length (List 1 2 3))  3)
+            (equal? (Length 1)             0) 
+            (equal? (Length 'x)            0)
+            (equal? (Length "foo")         0) 
+            (equal? (AtomQ 'foo)           #t)
+            (equal? (AtomQ (List 'foo))    #f)
+            
+            (equal? (Catenate (List (List 1 2 3) (Missing) (List 4 5 6))) (List 1 2 3 4 5 6))
+            (equal? (Join (List 1 2 3) (List 4 5 6)) (List 1 2 3 4 5 6))
+            )
+      "Basic Plus"
+      (and  (equal? (FullForm (Plus 1 2 3))                6)
+            (equal? (FullForm (Length (Plus 1 2 3)))       0)
+            (equal? (Plus 2 -2)                            0)
+            (equal? (Head (Plus 1 2 3))                    'Integer)
+            (equal? (Apply 'Minus (Plus 1 2 3))            6)
+            (equal? (FullForm (Apply 'Minus (Plus 1 'x)))  '(Minus 1 x)))
+      "Exposed Bug"
+      (and  (equal? (Order (Power 'y -1) (Power 'x -1)) -1))
+      "Rascas (Tests from the Rascas test suite)"
+      (list (equal? (FullForm (Eval (Minus (Divide (Times 'x 'y) 3))))
+                    '(Times -1/3 x y))
+            (equal? (FullForm (Power (Power (Power 'x 1/2) 1/2) 8))
+                    '(Power x 2))
+            (equal? (Divide 'x 'x) 1)
+            (equal? (FullForm (Times (Divide 'x 'y)
+                                     (Divide 'y 'x)))   1)
+      )
 
-#;(
-
-
-(List 1 2 3) 
-(Head (List 1 2 3))
-(List 1 2 'Nothing 3 4)
-(List 1 2 (Nothing 3 4) 5 6)
-(Head (Nothing 3 4))
-(List 1 2 (Splice 3 4) 5 6)
-(List 1 2 (Splice 3 (Splice 4 5) 6) 7)
-(equal? (Length (List 1 2 3)) 3)
-(equal? (Length 1)            0) 
-(equal? (Length 'x)           0)
-(equal? (Length "foo")        0) 
-(equal? (AtomQ 'foo)          #t)
-(equal? (AtomQ (List 'foo))   #f) 
-(equal? (Catenate (List (List 1 2 3) (Missing) (List 4 5 6))) (List 1 2 3 4 5 6))
-(equal? (Join (List 1 2 3) (List 4 5 6)) (List 1 2 3 4 5 6))
-
-
-;; (Plus 1 2 3)
-;; (Length (Plus 1 2 3))
-;; (Head (Plus 1 2 3))
-;; (Apply 'Minus (Plus 1 2 3))
-
-
-;; From bugs"
-(equal? (Order (Power 'y -1) (Power 'x -1)) -1)
+      #;(equal? (FullForm (Eval (Power (Times (Power (Times 'x 'y) 1/2) (Power 'z 2)) 2)))
+              '(Times x y (Power z 4))))
 
 
 ;; Tests from rascas
 
-(equal? (FullForm (Eval (Minus (Divide (Times 'x 'y) 3))))
-        '(Times -1/3 x y))
-
-(equal? (FullForm (Power (Power (Power 'x 1/2) 1/2) 8))
-        '(Power x 2))
-
-(equal? (FullForm (Eval (Power (Times (Power (Times 'x 'y) 1/2) (Power 'z 2)) 2)))
-        '(Times x y (Power z 4)))
-
-(equal? (Eval (Divide 'x 'x)) 1)
 
 
-;; ; TODO [1]: Times needs to fuse powers with same base
-(FullForm (Eval (Times (Divide 'x 'y)
-                       (Divide 'y 'x))))
+;; ;; ; TODO [1]: Times needs to fuse powers with same base
 
-(equal? (FullForm (Times 2 'x))       '(Times 2 x))
-(equal? (FullForm (Times 2 'x 'y 'z)) '(Times 2 x y z))
+;; (equal? (FullForm (Times 2 'x))       '(Times 2 x))
+;; (equal? (FullForm (Times 2 'x 'y 'z)) '(Times 2 x y z))
 
-;; ; TODO : Samme issue as TODO [1]
-(equal? (Power 'x 5) (Eval (Times (Power 'x 2) (Power 'x 3))))
+;; ;; ; TODO : Samme issue as TODO [1]
+;; (equal? (Power 'x 5) (Eval (Times (Power 'x 2) (Power 'x 3))))
 
 
-;; Thread
-(equal? (FullForm (Thread (Apply 'f (List (List 1 2 3)))))
-        '(List (f 1) (f 2) (f 3)))
-(equal? (FullForm (Thread (Apply 'f (List (List 1 2 3) 'x))))
-        '(List (f 1 x) (f 2 x) (f 3 x)))
-(equal? (FullForm (Thread (Apply 'f (List (List 1 2 3) (List 'x 'y 'x)))))
-        '(List (f 1 x) (f 2 y) (f 3 x)))
-(equal? (FullForm (Thread (Apply '== (List (List 'a 'b 'c) (List 'x 'y 'x)))))
-        '(List (== a x) (== b y) (== c x)))
+;; ;; Thread
+;; (equal? (FullForm (Thread (Apply 'f (List (List 1 2 3)))))
+;;         '(List (f 1) (f 2) (f 3)))
+;; (equal? (FullForm (Thread (Apply 'f (List (List 1 2 3) 'x))))
+;;         '(List (f 1 x) (f 2 x) (f 3 x)))
+;; (equal? (FullForm (Thread (Apply 'f (List (List 1 2 3) (List 'x 'y 'x)))))
+;;         '(List (f 1 x) (f 2 y) (f 3 x)))
+;; (equal? (FullForm (Thread (Apply '== (List (List 'a 'b 'c) (List 'x 'y 'x)))))
+;;         '(List (== a x) (== b y) (== c x)))
 
-; TODO: Log, Equal
+;; ; TODO: Log, Equal
 
-#;(equal? (FullForm (Thread (Log (Equal 'x 'y) 'Equal)))
-          ...)
+;; #;(equal? (FullForm (Thread (Log (Equal 'x 'y) 'Equal)))
+;;           ...)
 
-; TODO - more tests for Thread
-(equal? (FullForm (Eval (Eval (Times (List 1 2 3) 4))))
-        '(List 4 8 12))
+;; ; TODO - more tests for Thread
+;; (equal? (FullForm (Eval (Eval (Times (List 1 2 3) 4))))
+;;         '(List 4 8 12))
 
-; TODO - 
-;; > (FullForm (Plus 'x 'x (Times 3 'x)))
-;; '(Plus (Times 2 x) (Times 3 x))
+;; ; TODO - 
+;; ;; > (FullForm (Plus 'x 'x (Times 3 'x)))
+;; ;; '(Plus (Times 2 x) (Times 3 x))
 
-(FullForm (Eval (Plus 3 (Times 4 'x 'y) (Times 5 'x 'y))))
-'(Plus 3 (Times 4 x y) (Times 5 x y))
+;; (FullForm (Eval (Plus 3 (Times 4 'x 'y) (Times 5 'x 'y))))
+;; '(Plus 3 (Times 4 x y) (Times 5 x y))
 
-)
+
