@@ -2,6 +2,7 @@
 (require racket/format
          racket/list
          racket/match
+         racket/port
          racket/vector
          racket/sequence
          "for-parts.rkt"
@@ -116,6 +117,8 @@
 (define-syntax-rule (in-head expr)
   (in-value (Head expr)))
 
+; (FullForm expr)
+;   Convert the expression to S-expression form.
 (define (FullForm expr)
   (cond
     [(atom? expr) expr]
@@ -123,6 +126,26 @@
                         (map FullForm (form-elements expr)))]
     [else
      (list 'RACKET expr)]))
+
+; (InputForm expr)
+;   Convert to string suitable for input in the Wolfram language.
+(define (InputForm expr)
+  ; 1. Generate a tree of things to output
+  (define full (FullForm expr))
+  (define (out expr)
+    (match expr
+      [(list head e ...) (list head "[" (add-between (map out e) ", ") "]")]
+      [_                 expr]))       
+  ; 2. Output the tree
+  (define (output-tree x)
+    (with-output-to-string
+      (λ ()
+        (let loop ([x x])
+          (cond
+            [(null? x) (void)]
+            [(list? x) (map loop x)]
+            [else      (display x)])))))
+  (output-tree (out full)))
 
 
 (define in-elements
@@ -1162,10 +1185,8 @@
 (define-command Power #:attributes '(Listable NumericFunction OneIdentity Protected)
   (λ (form)
     ; (displayln (FullForm form))
-    (case (form-length form)
-      [(2)   (define x (form-ref form 1))
-             (define y (form-ref form 2))
-             (cond
+    (match-parts form
+      [(x y) (cond
                ; fast path
                [(and (number? x) (number? y))           (expt x y)]
                ; x¹ = x 
@@ -1174,16 +1195,17 @@
                [(equal? y 0)                            1]
                ; 1^x = 1
                [(equal? x 1)                            1]
-               ; (ab)^c = a^c b^c  when c<>0 is an integer
+               ; (ab)^c = a^c b^c  only if c<>0 is an integer
                [(and (has-head? x 'Times) (integer? y)) (define factors (for/parts ([x (in-elements x)])
                                                                           (Power x y)))
                                                         (make-form 'Times '() factors)]
-               ; (a^b)^c = a^(bc) when c is an integer
+               ; (a^b)^c = a^(bc) only if c is an integer
                [(and (and (has-head? x 'Power) (= (form-length x) 2))
-                     (integer? y))
+                     (integer? y))                
                 (define a (form-ref x 1))
                 (define b (form-ref x 2))
                 (Power a (Times b y))]
+               
                ; default
                [else form])]
       [else form])))
@@ -1378,6 +1400,7 @@
             (Times -1 x)]
       [else form])))
 
+
 ; Divide[x,y]
 (define-command Divide #:attributes '(Listable NumericFunction Protected)
   (λ (form)
@@ -1389,8 +1412,6 @@
               [(equal? x y) 1]
               [else         (Times x (Power y -1))])]
       [else form])))
-
-
 
 
 (list "Basic Tests"
@@ -1462,18 +1483,18 @@
             (equal? (FullForm (Eval1 (Eval1 (Power (Times (Power (Times 'x 'y) 1/2) (Power 'z 2)) 2))))
                     '(Times x y (Power z 4)))
             )
+      "Thread"
+      (list (equal? (FullForm (Thread (Apply 'f (List (List 1 2 3)))))
+                    '(List (f 1) (f 2) (f 3)))
+            (equal? (FullForm (Thread (Apply 'f (List (List 1 2 3) 'x))))
+                    '(List (f 1 x) (f 2 x) (f 3 x)))
+            (equal? (FullForm (Thread (Apply 'f (List (List 1 2 3) (List 'x 'y 'x)))))
+                    '(List (f 1 x) (f 2 y) (f 3 x)))
+            (equal? (FullForm (Thread (Apply '== (List (List 'a 'b 'c) (List 'x 'y 'x)))))
+                    '(List (== a x) (== b y) (== c x))))      
+      
       ) ; end of tests
 
-
-;; ;; Thread
-;; (equal? (FullForm (Thread (Apply 'f (List (List 1 2 3)))))
-;;         '(List (f 1) (f 2) (f 3)))
-;; (equal? (FullForm (Thread (Apply 'f (List (List 1 2 3) 'x))))
-;;         '(List (f 1 x) (f 2 x) (f 3 x)))
-;; (equal? (FullForm (Thread (Apply 'f (List (List 1 2 3) (List 'x 'y 'x)))))
-;;         '(List (f 1 x) (f 2 y) (f 3 x)))
-;; (equal? (FullForm (Thread (Apply '== (List (List 'a 'b 'c) (List 'x 'y 'x)))))
-;;         '(List (== a x) (== b y) (== c x)))
 
 ;; ; TODO: Log, Equal
 
