@@ -738,7 +738,7 @@
         [(< la lb)  1]
         [(> la lb) -1]
         [else     (case (Order (Head a) (Head b))
-                    [(1)   1]
+                    [( 1)  1]
                     [(-1) -1]
                     [else 
                      (define res (for/or ([ea (in-elements a)]
@@ -749,6 +749,9 @@
                                      [else   #f])))
                           (or res
                               0)])]))
+    (define (power?         f) (and (form? f) (= (form-length f) 2) (eq? (form-head f) 'Power)))
+    (define (power-base     f) (form-ref f 1))
+    (define (power-exponent f) (form-ref f 2))
     (λ (form)
       (case (form-length form)
         [(2) (define a (form-ref form 1))
@@ -766,17 +769,27 @@
                   [(2)   (StringOrder  a b)]
                   [(100) ; Symbols and forms both end up here
                    (cond
-                     ; note: (times-by-form? a b) ; is a = (Times number b)
+                     ; Case: At least one symbol.
+                     [(and (symbol? a) (symbol? b))  (SymbolOrder a b)]
+                     [(and (symbol? a) (times?  b))  (if (eq? (times-variable a) (times-variable b))
+                                                         (NumberOrder 1 (times-coefficient b))
+                                                         (SymbolOrder a (times-variable    b)))]
+                     [(and (symbol? a) (power? b))   (if (eq? a (power-base b))
+                                                         1 ; symbol first
+                                                         (Order a (power-base     b)))]
+                     [(and (times? a) (symbol? b))   (if (eq? (times-variable a) b)
+                                                         (NumberOrder (times-coefficient a) 1)
+                                                         (SymbolOrder (times-variable    a) b))]
+                     [(and (power? a) (symbol? b))   (if (eq? (power-base a) b)
+                                                         -1 ; symbol first
+                                                         (Order (power-base     a) a))]
+
                      ; symbol and Times[number, symbol] are treated the same
+                     ; 
                      [(and (times? a) (times? b)) (if (eq? (times-variable a) (times-variable b))
                                                       (NumberOrder (times-coefficient a) (times-coefficient b))
                                                       (SymbolOrder (times-variable    a) (times-variable    b)))]
-                     ;; [(and (symbol? a) (symbol? b))           (SymbolOrder  a b)]
-                     ;; [(and (symbol? a) (times-by-form? b a))  (NumberOrder 1 (times-constant b))] 
-                     ;; [(and (symbol? a) (times-form? b))       (Order (symbol->times-form a) b)]   
-                     ;; [(and (symbol? b) (times-by-form? a b))  (NumberOrder (times-constant a) 1)] 
-                     ;; [(and (symbol? b) (times-form? a))       (Order a (symbol->times-form b))]   
-                     [else                                    (FormOrder a b)])]
+                     [else                        (FormOrder a b)])]
                   [else  (error 'Order "internal error")])])]
         [else form]))))
 
@@ -1377,8 +1390,6 @@
       [else form])))
 
 
-
-
 (list "Basic Tests"
       (and  (equal? (FullForm (List 1 2 3))                           '(List 1 2 3))
             (equal? (FullForm (Head (List 1 2 3)))                    'List)
@@ -1413,9 +1424,9 @@
             (equal? (FullForm (Power (Power (Power 'x 1/2) 1/2) 8))
                     '(Power x 2))
             (equal? (Divide 'x 'x) 1)
-            (equal? (FullForm (Times (Divide 'x 'y)
-                                     (Divide 'y 'x)))   1)
-      )
+            (equal? (FullForm (Eval1 (Eval1 (Times (Divide 'x 'y)
+                                                   (Divide 'y 'x)))))   1)
+                    )
 
       #;(equal? (FullForm (Eval (Power (Times (Power (Times 'x 'y) 1/2) (Power 'z 2)) 2)))
               '(Times x y (Power z 4))))
