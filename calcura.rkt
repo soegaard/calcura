@@ -1167,23 +1167,26 @@
       [(2)   (define x (form-ref form 1))
              (define y (form-ref form 2))
              (cond
-              ; x¹ = x 
-              [(equal? y 1)                            x]              
-              [(and (number? x) (number? y))           (expt x y)]
-              ; x⁰ = 1
-              [(equal? y 0)                            1]
-              ; (ab)^c = a^c b^c  when c<>0 is an integer
-              [(and (has-head? x 'Times) (integer? y)) (define factors (for/parts ([x (in-elements x)])
-                                                                         (Power x y)))
-                                                       (make-form 'Times '() factors)]
-              ; (a^b)^c = a^(bc) when c is an integer
-              [(and (and (has-head? x 'Power) (= (form-length x) 2))
-                    (integer? y))
-               (define a (form-ref x 1))
-               (define b (form-ref x 2))
-               (Power a (Times b y))]
-              ; default
-              [else form])]
+               ; fast path
+               [(and (number? x) (number? y))           (expt x y)]
+               ; x¹ = x 
+               [(equal? y 1)                            x]
+               ; x⁰ = 1
+               [(equal? y 0)                            1]
+               ; 1^x = 1
+               [(equal? x 1)                            1]
+               ; (ab)^c = a^c b^c  when c<>0 is an integer
+               [(and (has-head? x 'Times) (integer? y)) (define factors (for/parts ([x (in-elements x)])
+                                                                          (Power x y)))
+                                                        (make-form 'Times '() factors)]
+               ; (a^b)^c = a^(bc) when c is an integer
+               [(and (and (has-head? x 'Power) (= (form-length x) 2))
+                     (integer? y))
+                (define a (form-ref x 1))
+                (define b (form-ref x 2))
+                (Power a (Times b y))]
+               ; default
+               [else form])]
       [else form])))
 
 
@@ -1349,7 +1352,9 @@
                                  (times-coefficient (vector-ref vec span-start))
                                  (for/fold ([sum 0]) ([i (in-range span-start (+ span-start span-length))])
                                    (+ sum (times-coefficient (vector-ref vec i))))))
-         (term-replace-coefficient (vector-ref vec span-start) coef))
+         (if (exact-zero? coef)
+             0
+             (term-replace-coefficient (vector-ref vec span-start) coef)))
 
        (cond
          ; no terms than the numeric constant term
@@ -1390,6 +1395,8 @@
       [else form])))
 
 
+
+
 (list "Basic Tests"
       (and  (equal? (FullForm (List 1 2 3))                           '(List 1 2 3))
             (equal? (FullForm (Head (List 1 2 3)))                    'List)
@@ -1407,26 +1414,55 @@
             (equal? (AtomQ (List 'foo))    #f)
             
             (equal? (Catenate (List (List 1 2 3) (Missing) (List 4 5 6))) (List 1 2 3 4 5 6))
-            (equal? (Join (List 1 2 3) (List 4 5 6)) (List 1 2 3 4 5 6))
+            (equal? (Join (List 1 2 3) (List 4 5 6))                      (List 1 2 3 4 5 6))
             )
       "Basic Plus"
-      (and  (equal? (FullForm (Plus 1 2 3))                6)
-            (equal? (FullForm (Length (Plus 1 2 3)))       0)
+      (and  (equal? (Plus)                                 0)
+            (equal? (Plus 2)                               2)
+            (equal? (Plus 2 3)                             5)
+            (equal? (Plus 2 3 4)                           9)
             (equal? (Plus 2 -2)                            0)
-            (equal? (Head (Plus 1 2 3))                    'Integer)
-            (equal? (Apply 'Minus (Plus 1 2 3))            6)
-            (equal? (FullForm (Apply 'Minus (Plus 1 'x)))  '(Minus 1 x)))
+            (equal? (Plus 2 -2 3 -3)                       0)
+            (equal? (Plus 'x)                              'x)
+            (equal? (Plus 0 'x)                            'x)
+            (equal? (FullForm (Plus 'x 'x))                '(Times 2 x))
+            (equal? (FullForm (Plus 'x 'x 'x))             '(Times 3 x))
+            (equal? (FullForm (Plus 'x 'x (Times 3 'x)))   '(Times 5 x))
+            (equal? (Plus 'x (Times -1 'x))                0)
+            (equal? (Length (Plus 1 'x))                   2)
+            (equal? (Head (Plus 1 'x))                     'Plus))
+      "Basic Times"
+      (and  (equal? (FullForm (Times))                     1)
+            (equal? (FullForm (Times 42))                  42)
+            (equal? (FullForm (Times 2 3 5))               30)
+            (equal? (FullForm (Times 2 3 'x))              '(Times 6 x))
+            (equal? (FullForm (Times 2 1/2 'x))            'x)
+            (equal? (FullForm (Length (Times 'x 'y)))      2)
+            (equal? (FullForm (Times 'x 'x))               '(Power x 2))
+            (equal? (FullForm (Times 'x (Power 'x 2)))     '(Power x 3))
+            (equal? (FullForm (Times 3 'x 'x))             '(Times 3 (Power x 2)))
+            (equal? (FullForm (Times 3 'x (Power 'x 2)))   '(Times 3 (Power x 3)))
+            )
+      "Basic Power"
+      (and  (equal? (FullForm (Power 'x 0))                1)
+            (equal? (FullForm (Power 1 'x))                1)
+            (equal? (FullForm (Power (Times 'a 'b)    3))  '(Times (Power a 3) (Power b 3)))
+            (equal? (FullForm (Power (Times 'a 'b 'c) 3))  '(Times (Power a 3) (Power b 3) (Power c 3)))
+            (equal? (FullForm (Power (Times 'a 'b)    'x)) '(Power (Times a b) x))
+            (equal? (FullForm (Power (Power 'x 2) 3))      '(Power x 6))            
+            )
       "Exposed Bug"
       (and  (equal? (Order (Power 'y -1) (Power 'x -1)) -1))
       "Rascas (Tests from the Rascas test suite)"
-      (list (equal? (FullForm (Eval (Minus (Divide (Times 'x 'y) 3))))
+      (and  (equal? (FullForm (Eval (Minus (Divide (Times 'x 'y) 3))))
                     '(Times -1/3 x y))
             (equal? (FullForm (Power (Power (Power 'x 1/2) 1/2) 8))
                     '(Power x 2))
             (equal? (Divide 'x 'x) 1)
             (equal? (FullForm (Eval1 (Eval1 (Times (Divide 'x 'y)
                                                    (Divide 'y 'x)))))   1)
-                    )
+            
+            )
 
       #;(equal? (FullForm (Eval (Power (Times (Power (Times 'x 'y) 1/2) (Power 'z 2)) 2)))
               '(Times x y (Power z 4))))
