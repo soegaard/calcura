@@ -642,7 +642,6 @@
             1))) ; (Power x 3) has the coefficient 1
   (if (eq? res #f)
       (begin
-        (displayln (list a res))
         (error 'times-coefficient (~a a)))
       res))
 
@@ -1162,7 +1161,7 @@
 ;   TODO - WIP
 (define-command Power #:attributes '(Listable NumericFunction OneIdentity Protected)
   (λ (form)
-    (displayln (FullForm form))
+    ; (displayln (FullForm form))
     (case (form-length form)
       [(2)   (define x (form-ref form 1))
              (define y (form-ref form 2))
@@ -1202,7 +1201,7 @@
 
 (define-command Times #:attributes '(Flat Listable NumericFunction OneIdentity Orderless Protected)
   (λ (form)
-    (displayln (FullForm form))
+    ; (displayln (FullForm form))
     (define (same? x y) ; check that x and y seen as powers have the same base
       ; The complication is that x and x^2 must be collected into one factor.
       (match* (x y)
@@ -1237,8 +1236,6 @@
        (define others        (span-indices parts number-end same?))
        (define n             (length others))
 
-       (displayln (list 'product product 'others others))
-       
        (define (factor-exponent a)
          (match a
            ; a = a^1
@@ -1283,7 +1280,6 @@
                                                     (collect (multiply-span parts span))))))
           
           ; Since Times[factor]=factor examine the number of parts here.
-          (displayln result-parts)
           (case (parts-length result-parts)
             [(0)  1]
             [(1)  (parts-ref result-parts 1)]
@@ -1459,26 +1455,14 @@
             (equal? (FullForm (Power (Power (Power 'x 1/2) 1/2) 8))
                     '(Power x 2))
             (equal? (Divide 'x 'x) 1)
-            (equal? (FullForm (Eval1 (Eval1 (Times (Divide 'x 'y)
-                                                   (Divide 'y 'x)))))   1)
-            
+            (equal? (FullForm
+                     (Eval1 (Eval1 (Times (Divide 'x 'y)
+                                          (Divide 'y 'x)))))    1)
+            (equal? (Times (Power 'x 2) (Power 'x 3))           (Power 'x 5))
+            (equal? (FullForm (Eval1 (Eval1 (Power (Times (Power (Times 'x 'y) 1/2) (Power 'z 2)) 2))))
+                    '(Times x y (Power z 4)))
             )
-
-      #;(equal? (FullForm (Eval (Power (Times (Power (Times 'x 'y) 1/2) (Power 'z 2)) 2)))
-              '(Times x y (Power z 4))))
-
-
-;; Tests from rascas
-
-
-
-;; ;; ; TODO [1]: Times needs to fuse powers with same base
-
-;; (equal? (FullForm (Times 2 'x))       '(Times 2 x))
-;; (equal? (FullForm (Times 2 'x 'y 'z)) '(Times 2 x y z))
-
-;; ;; ; TODO : Samme issue as TODO [1]
-;; (equal? (Power 'x 5) (Eval (Times (Power 'x 2) (Power 'x 3))))
+      ) ; end of tests
 
 
 ;; ;; Thread
