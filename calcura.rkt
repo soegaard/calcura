@@ -1,9 +1,10 @@
 #lang racket/base
 ;;;
-;;; CALCURA
+;;; Calcura
 ;;;
 
-; Calcura is a CAS (computer algebra system).
+;; Calcura is a computer algebra system.
+;;
 
 ;;;
 ;;; Dependencies
@@ -14,6 +15,7 @@
          racket/list
          racket/match
          racket/port
+         racket/promise
          racket/vector
          racket/sequence
          "for-parts.rkt"
@@ -35,7 +37,7 @@
 ;;; Attributes Table
 ;;;
 
-; Each command has an associated set of attributes.
+; Each symbol has an associated set of attributes.
 ; The user can read and set these with Attributes, SetAttributes and more.
 ; The functions below are for implementing these.
 
@@ -327,8 +329,10 @@
           [(_name: x) (syntax/loc stx (? predicate x))])))
     ...))
 
-(define (exact-zero? x) (and (number? x) (exact? x) (zero? x)))
-(define (exact-one? x)  (and (number? x) (exact? x) (= x 1)))
+(define (exact-zero? x)       (and (number? x) (exact? x) (zero? x)))
+(define (exact-one? x)        (and (number? x) (exact? x) (= x 1)))
+(define (positive-integer? x) (and (number? x) (exact? x) (> x 0)))
+(define (negative-integer? x) (and (number? x) (exact? x) (< x 0)))
 
 (define-match-expanders ([integer:  exact-integer?]
                          [rational: exact-rational?]
@@ -340,7 +344,9 @@
                          [string:   string?]
                          [number:   number?]
                          [zero:     exact-zero?]
-                         [one:      exact-one?]))
+                         [one:      exact-one?]
+                         [positive-integer:  positive-integer?]
+                         [negative-integer:  negative-integer?]))
 
 ; (form: _)                      match any form
 ; (form: x)                      match any form, bind it to x
@@ -573,6 +579,95 @@
                  [(form? expr) (MakeForm f (form-parts expr))]
                  [else         expr])]
      [else form])))
+
+
+(define-command Depth #:attributes '(Protected)
+  (λ (form)
+    (define (depth expr)
+      (if (form? expr)
+          (+ 1 (for/fold ([m 1]) ([x (in-elements expr)])
+                 (max m (depth x))))
+          1))
+    (define (depth/heads expr)
+      (if (form? expr)
+          (+ 1 (for/fold ([m 1]) ([x (in-form expr)])
+                 (max m (depth/heads x))))
+          1))
+    (match-parts form
+     [(expr)              (depth expr)]
+     ; [(expr Heads->True)  (depth/heads expr)]  ; todo: implement options
+     [else   form])))
+
+
+; A `level specification` is one of:
+;  - n            Levels 1 to n (inclusive)
+;  - Infinity     Levels 1 and greater
+;  - List[n]      Level `n` only
+;  - List[n₁, n₂] Levels `n₁` to `n₂` (inclusive)
+
+; Interpretation of `n`:
+;   If `n` is positive, then "level n" consists of the elements that needs two indices
+;   If `n` is negative, then "level n" consists of the elements with *depth* n
+;   If `n` is zero, the level consists of the entire expression.
+
+; (in-level-spec level-spec)
+;   Returns a sequence of individual levels.
+(define (in-level-spec level-spec)
+  (match level-spec
+    [(positive-integer: n)                       (in-range  1 (+ n 1))]
+    [(negative-integer: n)                       (in-range -1 (- n 1) -1)]
+    [(form: (List (integer: n)))                 (in-value n)]
+    [(form: (List (integer: n₁) (integer: n₂)))  (in-inclusive-range n₁ n₂)]
+    [0                                           empty-sequence] ; Since we count from 1.
+    ['Infinity                                   (in-naturals 1)]
+    [_                                           #f]))
+
+; Level[expr, levelspec]
+;   Returns list of all subexpressions of `expr` on the level(s) given by `levelspec`.
+;   If `levelspec` is List[-1] then a list of all atomic values is returned.
+;   Traversal is in depth-first order.
+(define-command Level #:attributes '(Protected)
+  (λ (form)
+    (define (single-level expr level)
+      (case level
+        [(0)  (list expr)]
+        [(1)  (if (form? expr)
+                  (for/list ([e (in-elements expr)]) e)
+                  (List))]
+        [else (cond
+                [(> level 1) (define prev-level (single-level expr (- level 1)))
+                             (flatten (for/list ([expr (in-list prev-level)]
+                                                 #:unless (atom? expr))
+                                        (for/list ([e (in-elements expr)])
+                                          e)))]
+                #;[(< level 0) (define d (Depth expr))
+                               (define l (- d (- level)))
+                               (if (< l 0)
+                                   (list)
+                                   (single-level expr l))]
+                [else        (error 'single-level (~a "internal error, level: " level))])]))
+    (match-parts form
+     [(expr level-spec) (define levels (in-level-spec level-spec))
+                        (cond
+                          [levels (define d (delay (Depth expr)))
+                                  (define single-levels 
+                                    (for/list ([level levels])
+                                      (cond
+                                        [(= level 0) (list expr)]
+                                        [(> level 0) (single-level expr level)]
+                                        [(< level 0) (define l (- (force d) (- level)))
+                                                     (if (< l 0)
+                                                         '()
+                                                         (single-level expr l))])))
+                                  (Form 'List (flatten single-levels))]
+                          [else   form])]                        
+     [else form])))
+
+
+
+; Map[f,expr]
+;   Apply the function `f` to each element on the first level of `expr`.
+
 
 
 ; A splice form will splice the elements into a surrounding list. 
@@ -1583,3 +1678,4 @@
 ;; '(Plus 3 (Times 4 x y) (Times 5 x y))
 
 
+(Join 1 2 3)
