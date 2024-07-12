@@ -1,5 +1,16 @@
 #lang racket/base
+;;;
+;;; CALCURA
+;;;
+
+; Calcura is a CAS (computer algebra system).
+
+;;;
+;;; Dependencies
+;;;
+
 (require racket/format
+         racket/hash-code
          racket/list
          racket/match
          racket/port
@@ -60,6 +71,9 @@
 
 ; Both the head and elements of an expression are expressions themselves.
 
+; Besides expressions of the form h[e₁, e₂,...] there is also atomic expressions.
+
+
 ;;; Representation
 
 ; An `expression` is either an `atom` or a `form`.
@@ -75,10 +89,48 @@
 
 ; As a convention all functions that return forms (or atoms) are capitalized.
 
-(struct expr ()                           #:transparent)
-(struct form expr (head attributes parts) #:transparent) ; parts = (vector #f element ...)
+(struct expr (hc)              #:transparent) ; hc = hash code
+(struct form expr (head parts) #:transparent) ; parts = (vector #f element ...)
 
-(define make-form form) ; extra constructor (used when `form` is shadowed
+(define (expression-hash-code expr)
+  (if (expr? expr)
+      (expr-hc expr)
+      (equal-hash-code expr))) ; the atomic case
+
+(define (parts-hash-code parts)
+  (hash-code-combine*
+   (for/list ([p (in-vector parts 1)])
+     (expression-hash-code p))))
+
+(define-syntax (MakeForm stx)
+  (syntax-parse stx
+    [(_MakeForm head parts)
+     (syntax/loc stx
+       (do-make-form2 head parts))]))
+
+(define do-make-form2
+  (let ()
+    (define forms-ht (make-hashalw))    
+    (λ (head parts)
+      ; compute hash code
+      (define hc0 (expression-hash-code head))
+      (define hc1 (parts-hash-code parts))
+      (define hc  (hash-code-combine hc0 hc1))
+      ; find possible equivalent form
+      (define existing-form (hash-ref forms-ht hc #f))
+      ; if found return it, otherwise store the form
+      (define (make-new-form)
+        (define new-form (form hc head parts))
+        (hash-set! forms-ht hc new-form)
+        new-form)      
+      (cond
+        [existing-form (if (and (equal-always? head (Head existing-form))
+                                (for/and ([p  (in-vector parts 1)]
+                                          [ep (in-elements existing-form)])
+                                  (equal-always? p ep)))
+                           existing-form
+                           (make-new-form))]
+        [else          (make-new-form)]))))
 
 ;;; Atoms
 
@@ -94,6 +146,10 @@
 ; (define (form-head       form) ...)
 ; (define (form-attributes form) ...)
 ; Implicitly defined by (struct form ...) .
+
+(define (form-hash-code expr)
+  ; the hash code of the form
+  (expr-hc expr))
 
 (define (form-elements expr)
   ; the elements as a Racket list
@@ -146,6 +202,7 @@
             [(list? x) (map loop x)]
             [else      (display x)])))))
   (output-tree (out full)))
+
 
 
 (define in-elements
@@ -219,7 +276,7 @@
          (unless (form? form-val)
            (raise-syntax-error 'match-form (~a "expected form, got: " form-val)))
          (match form-val
-           [(form 'head-sym _ (vector #f elem-pat ...)) . more]
+           [(form _ 'head-sym _ (vector #f elem-pat ...)) . more]
            ...
            [_ (raise-syntax-error 'match-form (~a "no matching clause for " form-val))])))]
     [(_match-form form-expr [(head-sym elem-pat ...) . more] ... [else . more-else])
@@ -228,7 +285,7 @@
          (unless (form? form-val)
            (raise-syntax-error 'match-form (~a "expected form, got: " form-val)))
          (match form-val
-           [(form 'head-sym _ (vector #f elem-pat ...)) . more]
+           [(form _ 'head-sym _ (vector #f elem-pat ...)) . more]
            ...
            [_ . more-else])))]))
 
@@ -292,7 +349,7 @@
 (define-match-expander form:
   (λ (stx)
     (syntax-case stx (_)
-      [(_form: (head-sym elm-pat ...)) (syntax/loc stx (form 'head-sym _ (vector #f elm-pat ...)))]
+      [(_form: (head-sym elm-pat ...)) (syntax/loc stx (form _ 'head-sym (vector #f elm-pat ...)))]
       [(_form: _)                      (syntax/loc stx (? form?))]
       [(_form: name)                   (syntax/loc stx (? form? name))]
       [(_form: name head)              (syntax/loc stx (? (λ (x) (has-head? x head)) name))])))
@@ -320,15 +377,12 @@
 ;;; Forms
 
 ; (Form head arguments)
-; (Form head attributes arguments)
 ;    Used to construct forms from arguments represented as Racket lists.
 ;    Note: Not a builtin. 
 (define Form
   (case-lambda
-    [(head arguments)           ; arguments is a Racket list     
-     (Form head '() arguments)]
-    [(head attributes arguments)
-     (form head attributes (list->vector (cons #f arguments)))]))
+    [(head arguments) ; arguments is a Racket list
+     (MakeForm head (list->vector (cons #f arguments)))]))
 
 (define (has-head? form symbol)
   (and (form? form)
@@ -516,7 +570,7 @@
   (λ (form)
     (match-parts form
      [(f expr) (cond
-                 [(form? expr) (make-form f '() (form-parts expr))]
+                 [(form? expr) (MakeForm f (form-parts expr))]
                  [else         expr])]
      [else form])))
 
@@ -526,10 +580,14 @@
   (λ (form)
     form))
 
-
+; List[e₁, e₂, ...]
+;   Constructs a list of elements e₁, e₂, ...
+;   A "Nothing" element will automatically be removed.
+;   If an element is a Splice expression, the elements of the
+;   Splice expression are "spliced" into the resulting list.
 (define-command List #:attributes '(Locked Protected)
   (λ (form)
-    (define (nothing?     x) (eq? x 'Nothing))
+    (define (nothing? x) (eq? x 'Nothing))
     
     (define (splice as)
       (let loop ([as as] [ass '()])
@@ -544,7 +602,7 @@
                           (cons a
                                 (loop (cdr as) ass)))])))
 
-    ; If neither there are no Splice or Nothing subforms, we can take a fast path.
+    ; If there are neither Splice nor Nothing subforms, we can take a fast path.
     (define splice-needed?             (for/or ([expr (in-elements form)]) (splice-form? expr)))
     (define removal-of-nothing-needed? (for/or ([expr (in-elements form)]) (nothing?     expr)))
     (cond
@@ -677,19 +735,19 @@
     ; todo: check whether the literal 1 matches 1.0
     [(1 (symbol: sym))                     sym]
     [(1 (form: (Times (number: _) _ ...))) (define new-parts (vector-set/copy (form-parts term) 1 coef))
-                                           (make-form 'Times '() new-parts)]
+                                           (MakeForm 'Times new-parts)]
     [(1 term)                              term]
      
-    [(_ (symbol: sym))                     (make-form 'Times '() (vector #f coef sym))]    
+    [(_ (symbol: sym))                     (MakeForm 'Times (vector #f coef sym))]    
     [(_ (form: (Times (number: _) _ ...))) (define new-parts (vector-set/copy (form-parts term) 1 coef))
-                                           (make-form 'Times '() new-parts)]    
+                                           (MakeForm 'Times new-parts)]    
     [(_ (form: (Times  _ ...)))            (define parts (form-parts term))
                                            (define n     (vector-length parts))
                                            (define new-parts (make-vector (+ n 1)))
                                            (vector-set! new-parts 1 coef)
                                            (vector-copy! new-parts 2 parts 1)
-                                           (make-form 'Times '() new-parts)]
-    [(_ term)                              (make-form 'Times '() (vector #f coef term))]
+                                           (MakeForm 'Times new-parts)]
+    [(_ term)                              (MakeForm 'Times (vector #f coef term))]
     [(_ _)                                 (error 'term-replace-coefficient)]))
 
 (define-command Order #:attributes '(Protected)
@@ -697,7 +755,7 @@
     ; The following Times-related functions are used
     ; in order to sort a symbol x the same as Times[number,x].
     (define (symbol->times-form x)
-      (make-form 'Times '() (vector #f 1 x)))
+      (MakeForm 'Times (vector #f 1 x)))
 
     (define the-form-order 100)
     (define type-order-ht
@@ -826,7 +884,7 @@
         [(form? form)
          (define parts (vector-copy (form-parts form)))
          (vector-sort! parts  (λ (f1 f2) (case (p f1 f2) [(1 #t) #t] [else #f]))  1)
-         (make-form (form-head form) '() parts)]
+         (MakeForm (form-head form) parts)]
         [else orig-form]))
 
     (match-parts orig-form
@@ -853,15 +911,27 @@
 
 (define $IterationLimit 10) ; default is 4096
 
-(define (Eval expr)
-  ; Loop until we find a fix-point or the limit is reached
-  (let loop ([i 0] [expr expr])
-    ; (displayln (list 'Eval: (FullForm expr)))
-    (define expr1 (Eval1 expr))
-    (cond
-      [(eq? expr1 expr)      expr]
-      [(= i $IterationLimit) expr]
-      [else                  (loop (+ i 1) (Eval1 expr1))])))
+(define Eval
+  (let ()
+    ; eval-ht : hash-code -> expression
+    (define eval-ht (make-hasheq))
+    ; Eval : Expression -> Expression
+    (λ (expr)
+      (define expr0 expr) ; initial expression
+      
+      ; Loop until we find a fix-point or the limit is reached.
+      (let loop ([i 0] [expr expr])
+        (define old-result (hash-ref eval-ht expr #f))
+        (cond
+          [old-result old-result]
+          [else
+           (define expr1 (Eval1 expr))
+           (cond
+             [(eq? expr1 expr)      (hash-set! eval-ht expr0 expr)
+                                    expr]
+             [(= i $IterationLimit) (hash-set! eval-ht expr0 expr)
+                                    expr]
+             [else                  (loop (+ i 1) (Eval1 expr1))])])))))
 
 
 (define (Eval1 expr)
@@ -934,7 +1004,7 @@
                   ; (displayln (list 'flat-flattened-parts flat-flattened-parts))
                   ; 6. Reconstruct the form
                   (define new-form (let ()
-                                     (define new (Form h (form-attributes form) flat-flattened-parts))
+                                     (define new (Form h flat-flattened-parts))
                                      (if (equal? new form) form new)))
                   ; (displayln (list 'new-form (FullForm new-form) (eq? form new-form)))
                   ; (displayln (list 'new-form (FullForm new-form)))
@@ -1016,12 +1086,12 @@
                                                               ([e (in-elements e1)]
                                                                #:unless (MissingQ e))
                                                      e))
-                                                 (make-form 'List '() parts)]
+                                                 (MakeForm 'List parts)]
                            [else e1])]
                     [else (define parts (for/parts([e (in-elements* (filter non-missing? (form-elements exprs)))]
                                                    #:unless (MissingQ e))
                                           e))
-                          (make-form 'List '() parts)])]
+                          (MakeForm 'List parts)])]
                  [else form])]
       ; default
       [else form])))
@@ -1059,7 +1129,7 @@
                (define parts     (for/parts #:length total-len
                                    ([x (in-elements* (cons expr1 exprs))])
                                    x))
-               (make-form head1 '() parts)]
+               (MakeForm head1 parts)]
               ; Not all heads were the same
               [else
                form])])))
@@ -1074,7 +1144,7 @@
                                            ([x (in-sequences (in-elements expr)
                                                              (in-value    elem))])
                                            x))
-                           (make-form (form-head expr) '() parts)]
+                           (MakeForm (form-head expr) parts)]
       [(atom elem)         (begin ; TODO - warning here
                              form)]
       [else form])))
@@ -1092,7 +1162,7 @@
                                             ([x (in-sequences (in-value    elem)
                                                               (in-elements expr))])
                                             x))
-                            (make-form (form-head expr) '() parts)]
+                            (MakeForm (form-head expr) parts)]
       [(atom elem)          form]   ; TODO - warning here
       [else                 form])))
 
@@ -1110,7 +1180,7 @@
                               (in-value    elem)
                               (in-elements list n l))])
                          x))
-         (make-form (form-head list) '() parts)]
+         (MakeForm (form-head list) parts)]
         [else
          ; TODO - warn n out of bounds
          orig-form]))
@@ -1169,13 +1239,13 @@
        [(not same?)       orig-form]
        [(null? h-indices) orig-form]
        [else              (define dim (car h-lengths))                          
-                          (make-form h '()
-                                     (for/parts ([i (in-inclusive-range 1 dim)])
-                                       (make-form (Head f-args) '()
-                                                  (for/parts ([arg (in-elements f-args)])
-                                                    (if (has-head? arg h)
-                                                        (form-ref arg i)
-                                                        arg)))))])]
+                          (MakeForm h 
+                                    (for/parts ([i (in-inclusive-range 1 dim)])
+                                      (MakeForm (Head f-args) 
+                                                (for/parts ([arg (in-elements f-args)])
+                                                  (if (has-head? arg h)
+                                                      (form-ref arg i)
+                                                      arg)))))])]
 
     [else orig-form]))
 
@@ -1198,7 +1268,7 @@
                ; (ab)^c = a^c b^c  only if c<>0 is an integer
                [(and (has-head? x 'Times) (integer? y)) (define factors (for/parts ([x (in-elements x)])
                                                                           (Power x y)))
-                                                        (make-form 'Times '() factors)]
+                                                        (MakeForm 'Times factors)]
                ; (a^b)^c = a^(bc) only if c is an integer
                [(and (and (has-head? x 'Power) (= (form-length x) 2))
                      (integer? y))                
@@ -1305,7 +1375,7 @@
           (case (parts-length result-parts)
             [(0)  1]
             [(1)  (parts-ref result-parts 1)]
-            [else (make-form 'Times '() result-parts)])])])))
+            [else (MakeForm 'Times result-parts)])])])))
 
 
 
@@ -1389,7 +1459,7 @@
           ; Since Plus[term]=term examine the number of parts here.
           (if (= (parts-length result-parts) 1)
               (parts-ref result-parts 1)
-              (make-form 'Plus '() result-parts))])])))
+              (MakeForm 'Plus result-parts))])])))
 
 
 ; Minus[x]
