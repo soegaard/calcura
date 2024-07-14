@@ -3,8 +3,7 @@
 ;;; Calcura
 ;;;
 
-;; Calcura is a computer algebra system.
-;;
+;; Calcura is a computer algebra system inspired by Mathematica.
 
 ;;;
 ;;; Dependencies
@@ -207,6 +206,7 @@
 
 
 
+
 (define in-elements
   ; The indices `start` and `end` are 1-based.
   ; Both `start` and `end` are inclusive.
@@ -389,6 +389,18 @@
   (case-lambda
     [(head arguments) ; arguments is a Racket list
      (MakeForm head (list->vector (cons #f arguments)))]))
+
+; ToExpression
+;   Convert an S-expression into an Expression (form).
+(define (ToExpression s-expr)
+  (cond
+    [(atom?  s-expr)  s-expr]
+    [(empty? s-expr)  (List)]
+    [(list?  s-expr)  (define es   (map ToExpression s-expr))
+                      (define head (first es))
+                      (define args (rest es))
+                      (Form head args)]))
+
 
 (define (has-head? form symbol)
   (and (form? form)
@@ -622,43 +634,81 @@
     ['Infinity                                   (in-naturals 1)]
     [_                                           #f]))
 
+;; ; traverse
+;; ;   Depth first traversal
+;; (define (traverse expr [start 1] [end (Length expr)] [level 1])
+;;   ; Loop returns the depth of the expresion `expr`.
+;;   (define (loop expr start end level)
+;;     (for ([i (in-inclusive-range start end)])
+;;       (define e (form-ref expr i))
+;;       ; (displayln (list e 'i i 'level level))
+;;       (cond
+;;         [(atom? e) (define d level)
+;;                    (displayln (list 'e e 'd d))
+;;                    d]
+;;         [(form? e) (define d (loop e 1 (form-length e) (+ level 1)))
+;;                    (displayln (list 'e e 'd d))
+;;                    d])))
+;;   (loop expr start end level))
+
+
+
 ; Level[expr, levelspec]
 ;   Returns list of all subexpressions of `expr` on the level(s) given by `levelspec`.
 ;   If `levelspec` is List[-1] then a list of all atomic values is returned.
 ;   Traversal is in depth-first order.
 (define-command Level #:attributes '(Protected)
   (λ (form)
+    ; single-depth
+    ;   Return list of all expressions with depth `depth`.
+    (define (single-depth expr depth)
+      (define xs '())
+      ; Loop returns the depth of the expresion `expr`.
+      (define (loop expr)
+        (+ 1 (for/fold ([d 0])
+                       ([e (in-elements expr)])
+               (max d 
+                    (cond
+                      [(atom? e) (define d 1)
+                                 (when (= d depth)
+                                   (set! xs (cons e xs)))
+                                 d]
+                      [(form? e) (define d (loop e))
+                                 (when (= d depth)
+                                   (set! xs (cons e xs)))
+                                 d])))))
+      (cond
+        [(atom? expr) (if (= depth 1) (list expr) '())]
+        [else         (define d (loop expr))
+                      (if (= d depth)
+                          (reverse (cons expr xs))
+                          (reverse xs))]))
+
+    ; single-level
+    ;   Return list of all elements with level `level`.
+    ;   Assume: level>=0
     (define (single-level expr level)
       (case level
         [(0)  (list expr)]
         [(1)  (if (form? expr)
                   (for/list ([e (in-elements expr)]) e)
-                  (List))]
-        [else (cond
-                [(> level 1) (define prev-level (single-level expr (- level 1)))
-                             (flatten (for/list ([expr (in-list prev-level)]
-                                                 #:unless (atom? expr))
-                                        (for/list ([e (in-elements expr)])
-                                          e)))]
-                #;[(< level 0) (define d (Depth expr))
-                               (define l (- d (- level)))
-                               (if (< l 0)
-                                   (list)
-                                   (single-level expr l))]
-                [else        (error 'single-level (~a "internal error, level: " level))])]))
+                  '())]
+        ; level > 1
+        [else (define prev-level (single-level expr (- level 1)))
+              (flatten (for/list ([expr (in-list prev-level)]
+                                  #:unless (atom? expr))
+                         (for/list ([e (in-elements expr)])
+                           e)))]))
+    ; Unpack level specification and collect one level/depth at a time.
     (match-parts form
      [(expr level-spec) (define levels (in-level-spec level-spec))
                         (cond
-                          [levels (define d (delay (Depth expr)))
-                                  (define single-levels 
+                          [levels (define single-levels 
                                     (for/list ([level levels])
                                       (cond
                                         [(= level 0) (list expr)]
                                         [(> level 0) (single-level expr level)]
-                                        [(< level 0) (define l (- (force d) (- level)))
-                                                     (if (< l 0)
-                                                         '()
-                                                         (single-level expr l))])))
+                                        [(< level 0) (single-depth expr (- level))])))
                                   (Form 'List (flatten single-levels))]
                           [else   form])]                        
      [else form])))
@@ -667,6 +717,23 @@
 
 ; Map[f,expr]
 ;   Apply the function `f` to each element on the first level of `expr`.
+
+
+(define-command Association #:attributes '(HoldAllComplete Protected)
+  (λ (form)
+    form))
+
+(define-command Rule #:attributes '(Protected SequenceHold)
+  (λ (form)
+    form))
+
+;; (define-command Part #:attributes '(NHoldRest Protected ReadProtected)
+;;   (λ (form)
+;;     (match-parts form
+;;       [(expr (integer: i)) (cond
+;;                              [(= i 0) (Head expr)]
+;;                              [(> i 0) (define n (form-length 
+                                        
 
 
 
@@ -987,12 +1054,6 @@
       [( (form: list) p )  (do-sort list p)]
       [else orig-form])))
 
-
-(define-command Rule #:attributes '(Protected SequenceHold)
-  (λ (form)
-    (match-parts form
-      [(lhs rhs) (Form 'Rule (list lhs rhs))]
-      [else      form])))
 
 
 (define-command ListQ #:attributes '(Protected)
@@ -1633,6 +1694,37 @@
             (equal? (FullForm (Power (Times 'a 'b)    'x)) '(Power (Times a b) x))
             (equal? (FullForm (Power (Power 'x 2) 3))      '(Power x 6))            
             )
+      "Depth"
+      (and  (equal? (Depth 1)                   1)
+            (equal? (Depth (List 1))            2)
+            (equal? (Depth (List 1 (List 2) 3)) 3))
+      "Level"
+      (and "atomic expression"
+           (equal? (FullForm (Level 42 (List  0))) '(List 42))
+           (equal? (FullForm (Level 42 (List  1))) '(List))
+           (equal? (FullForm (Level 42 (List -1))) '(List 42))
+           (equal? (FullForm (Level 42 (List -2))) '(List))
+           "simple form"
+           ; The expression `(List 1)` has depth 2.
+           (equal? (FullForm (Level (List 1) (List   0)))  '(List (List 1)))
+           (equal? (FullForm (Level (List 1) (List   1)))  '(List 1))
+           (equal? (FullForm (Level (List 1) (List   2)))  '(List))
+           (equal? (FullForm (Level (List 1) (List  -1)))  '(List 1))
+           (equal? (FullForm (Level (List 1) (List  -2)))  '(List (List 1)))
+           (equal? (FullForm (Level (List 1) (List  -3)))  '(List))
+           "nested form"
+           ; The expression has depth 4.
+           (equal? (FullForm (Level (List 1 (List 2 (List 3) 4)) (List  0)))  '(List (List 1 (List 2 (List 3) 4))))
+           (equal? (FullForm (Level (List 1 (List 2 (List 3) 4)) (List  1)))  '(List 1 (List 2 (List 3) 4)))
+           (equal? (FullForm (Level (List 1 (List 2 (List 3) 4)) (List  2)))  '(List 2 (List 3) 4))
+           (equal? (FullForm (Level (List 1 (List 2 (List 3) 4)) (List  3)))  '(List 3))
+           (equal? (FullForm (Level (List 1 (List 2 (List 3) 4)) (List  4)))  '(List))
+           (equal? (FullForm (Level (List 1 (List 2 (List 3) 4)) (List -1)))  '(List 1 2 3 4))
+           (equal? (FullForm (Level (List 1 (List 2 (List 3) 4)) (List -2)))  '(List (List 3)))
+           (equal? (FullForm (Level (List 1 (List 2 (List 3) 4)) (List -3)))  '(List (List 2 (List 3) 4)))
+           (equal? (FullForm (Level (List 1 (List 2 (List 3) 4)) (List -4)))  '(List (List 1 (List 2 (List 3) 4))))
+           (equal? (FullForm (Level (List 1 (List 2 (List 3) 4)) (List -5)))  '(List)))
+           
       "Exposed Bug"
       (and  (equal? (Order (Power 'y -1) (Power 'x -1)) -1))
       "Rascas (Tests from the Rascas test suite)"
@@ -1678,4 +1770,4 @@
 ;; '(Plus 3 (Times 4 x y) (Times 5 x y))
 
 
-(Join 1 2 3)
+; (Join 1 2 3)
