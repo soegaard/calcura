@@ -1641,10 +1641,10 @@
               [else         (Times x (Power y -1))])]
       [else form])))
 
-; In[n]
-;   The n'th input expression
 ; In[]
 ;   The last input expression
+; In[n]
+;   The n'th input expression
 (define-command In #:attributes '(Listable NHoldFirst Protected)
   (λ (form)
     (define session (current-session))
@@ -1681,6 +1681,15 @@
                       (or (session-out session i)
                           form)]
       [else         form])))
+
+; Print[expr1, ...]
+;   Print the expressions in order. End with a newline.
+(define-command Print #:attributes '(Listable NHoldFirst Protected)
+  (λ (form)
+    (for ([expr (in-elements form)])
+      (display expr))
+    (newline)
+    'Null))
 
 
 ;;;
@@ -1754,8 +1763,9 @@
 
   (define (display-out-message i result)
     (newline)
-    (displayln (~a "Out[" i "]= " result))
-    (newline))
+    (unless (eq? result 'Null)
+      (displayln (~a "Out[" i "]= " result))
+      (newline)))
   
   (define (loop [i 1])
     ; Read next expression
