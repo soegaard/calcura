@@ -399,7 +399,9 @@
     [(list?  s-expr)  (define es   (map ToExpression s-expr))
                       (define head (first es))
                       (define args (rest es))
-                      (Form head args)]))
+                      (Form head args)]
+    [(form? s-expr)   s-expr]
+    [else             (error 'ToExpression (~a "got: " s-expr))]))
 
 
 (define (has-head? form symbol)
@@ -1639,6 +1641,25 @@
               [else         (Times x (Power y -1))])]
       [else form])))
 
+; In[n]
+;   The n'th input expression
+; In[]
+;   The last input expression
+(define-command In #:attributes '(Listable NHoldFirst Protected)
+  (λ (form)
+    (define session (current-session))
+    (match-parts form
+      [((integer: n)) (cond
+                        [(= n 0) form]
+                        [(> n 0) (or (session-in session n)
+                                     form)]
+                        [else    'todo])]
+      [()             (define i (session-history-length session))
+                      (or (session-in session i)
+                          form)]
+      [else         form])))
+
+
 ;;;
 ;;; Session
 ;;; 
@@ -1660,17 +1681,50 @@
   (define outs (session-outs session))
   (hash-set! outs i output))
 
+(define (session-in session i)
+  (define ins (session-ins session))
+  (hash-ref ins i #f))
+
+(define (session-out session i)
+  (define outs (session-outs session))
+  (hash-ref outs i #f))
+
+(define (session-history-length session)
+  (hash-count (session-ins session)))
+  
+
+
 (define current-session (make-parameter (new-session)))
 
 ;;;
 ;;; REPL
 ;;;
 
+
+; Read[]
+;   Read an s-expression from standard input.
+;   Convert repl-related symbols such as % into In[] and similar.
+;   Use FromRacketCAS for now to convert into an Expression.
+(define (Read)
+  (define names (hasheq '% (In)))
+
+  (define (convert-symbol s)
+    (hash-ref names s s))
+  
+  (define (convert s)
+    (cond
+      [(symbol? s) (convert-symbol s)]
+      [(list?   s) (map convert s)]
+      [else        s]))
+
+  (FromRacketCAS (convert (read))))
+
+
 (define (repl)
   (displayln "Calcura 2024")
   (define session (current-session))
 
-  (define (display-in-prompt i)    
+  (define (display-in-prompt i)
     (display (~a "In[" i "]:= ")))
 
   (define (display-out-message i result)
@@ -1681,14 +1735,14 @@
   (define (loop [i 1])
     ; Read next expression
     (display-in-prompt i)
-    (define s-expr (read))
-    (session-in! session i s-expr)
+    (define expr (Read))
+    (session-in! session i expr)
     ; Evaluate expression
-    (case s-expr
+    (case expr
       [(Exit Quit exit quit)
+       (session-out! session i 'Null)
        (void)]
       [else
-       (define expr   (ToExpression s-expr))
        ; (define result (time (Eval expr)))
        (define result (Eval expr))
        (session-out! session i result)
