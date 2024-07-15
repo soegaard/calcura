@@ -1653,9 +1653,32 @@
                         [(= n 0) form]
                         [(> n 0) (or (session-in session n)
                                      form)]
-                        [else    'todo])]
+                        [else    (define l (session-history-length session))
+                                 (or (session-in session (+ l n 1))
+                                     form)])]
       [()             (define i (session-history-length session))
                       (or (session-in session i)
+                          form)]
+      [else         form])))
+
+
+; Out[]
+;   The last output expression.
+; Out[n]
+;   The n'th output expression.
+(define-command Out #:attributes '(Listable NHoldFirst Protected)
+  (λ (form)
+    (define session (current-session))
+    (match-parts form
+      [((integer: n)) (cond
+                        [(= n 0) form]
+                        [(> n 0) (or (session-out session n)
+                                     form)]
+                        [else    (define l (session-history-length session))
+                                 (or (session-out session (+ l n 1))
+                                     form)])]
+      [()             (define i (session-history-length session))
+                      (or (session-out session i)
                           form)]
       [else         form])))
 
@@ -1690,7 +1713,7 @@
   (hash-ref outs i #f))
 
 (define (session-history-length session)
-  (hash-count (session-ins session)))
+  (hash-count (session-outs session)))
   
 
 
@@ -1706,7 +1729,9 @@
 ;   Convert repl-related symbols such as % into In[] and similar.
 ;   Use FromRacketCAS for now to convert into an Expression.
 (define (Read)
-  (define names (hasheq '% (In)))
+  (define names (hasheq '%   (Out)
+                        '%%  (Out -2)
+                        '%%% (Out -3)))
 
   (define (convert-symbol s)
     (hash-ref names s s))
