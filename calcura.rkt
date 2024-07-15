@@ -1640,23 +1640,66 @@
       [else form])))
 
 ;;;
+;;; Session
+;;; 
+
+; A session represents the state of the current
+; user session. The command history is stored
+; in two hash tables `ins` and `outs`. 
+
+(struct session (ins outs) #:transparent)
+
+(define (new-session)
+  (session (make-hash) (make-hash)))
+
+(define (session-in! session i input)
+  (define ins (session-ins session))
+  (hash-set! ins i input))
+
+(define (session-out! session i output)
+  (define outs (session-outs session))
+  (hash-set! outs i output))
+
+(define current-session (make-parameter (new-session)))
+
+;;;
 ;;; REPL
 ;;;
 
 (define (repl)
   (displayln "Calcura 2024")
-  (define (loop)
-    (display "> ")
+  (define session (current-session))
+
+  (define (display-in-prompt i)    
+    (display (~a "In[" i "]:= ")))
+
+  (define (display-out-message i result)
+    (newline)
+    (displayln (~a "Out[" i "]= " result))
+    (newline))
+  
+  (define (loop [i 1])
+    ; Read next expression
+    (display-in-prompt i)
     (define s-expr (read))
+    (session-in! session i s-expr)
+    ; Evaluate expression
     (case s-expr
       [(Exit Quit exit quit)
        (void)]
       [else
        (define expr   (ToExpression s-expr))
-       (define result (time (Eval expr)))
-       (displayln (FullForm result))
-       (loop)]))
+       ; (define result (time (Eval expr)))
+       (define result (Eval expr))
+       (session-out! session i result)
+       (display-out-message i (FullForm result))
+       (loop (+ i 1))]))
   (loop))
+
+;;;
+;;; RacketCAS
+;;; 
+
 
 ; FromRacketCAS : S-expression -> Expression
 ;   This converts an s-expression using standard Racket notation
