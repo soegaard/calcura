@@ -1639,6 +1639,57 @@
               [else         (Times x (Power y -1))])]
       [else form])))
 
+;;;
+;;; REPL
+;;;
+
+(define (repl)
+  (displayln "Calcura 2024")
+  (define (loop)
+    (display "> ")
+    (define s-expr (read))
+    (case s-expr
+      [(Exit Quit exit quit)
+       (void)]
+      [else
+       (define expr   (ToExpression s-expr))
+       (define result (time (Eval expr)))
+       (displayln (FullForm result))
+       (loop)]))
+  (loop))
+
+; FromRacketCAS : S-expression -> Expression
+;   This converts an s-expression using standard Racket notation
+;   (as used in racket-cas) to an Expression used by Calcura.
+(define (FromRacketCAS s-expr)
+  (define names (hasheq '+    'Plus
+                        '-    'Minus
+                        '*    'Times
+                        '/    'Divide
+                        'sqrt 'Sqrt
+                        'expt 'Power
+                        'exp  'Exp
+                        'sin  'Sin
+                        'cos  'Cos
+                        'tan  'Tan
+                        'log  'Log))
+
+  (define (convert-symbol s)
+    (hash-ref names s s))
+  
+  (define (convert s)
+    (cond
+      [(symbol? s) (convert-symbol s)]
+      [(list?   s) (map convert s)]
+      [else        s]))
+
+  (ToExpression (convert s-expr)))
+
+
+
+;;;
+;;; Tests
+;;;
 
 (list "Basic Tests"
       (and  (equal? (FullForm (List 1 2 3))                           '(List 1 2 3))
