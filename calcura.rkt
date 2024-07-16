@@ -1641,25 +1641,39 @@
               [else         (Times x (Power y -1))])]
       [else form])))
 
-; In[]
-;   The last input expression
-; In[n]
-;   The n'th input expression
-(define-command In #:attributes '(Listable NHoldFirst Protected)
+;;;
+;;; Function Iteration
+;;;
+
+;; ; Construct[f,x]
+;; ;   Returns f[x].
+;; ; Construct[f, x1, ..., xn]
+;; ;   Returns f[x1, ..., xn]
+;; (define-command Construct #:attributes '(Protected)
+;;   (λ (form)
+;;     (match-parts form
+;;       [(form: (_ f xs ...))
+;;        (Form f xs)]
+;;       [else
+;;        form])))
+
+
+
+; Nest[f, expr, n]
+;   Return expression where `f` is applied to `expr` exactly `n` times. 
+(define-command Nest #:attributes '(Protected)
   (λ (form)
-    (define session (current-session))
     (match-parts form
-      [((integer: n)) (cond
-                        [(= n 0) form]
-                        [(> n 0) (or (session-in session n)
-                                     form)]
-                        [else    (define l (session-history-length session))
-                                 (or (session-in session (+ l n 1))
-                                     form)])]
-      [()             (define i (session-history-length session))
-                      (or (session-in session i)
-                          form)]
-      [else         form])))
+      [(f expr (integer: n))
+       (cond
+         [(= n 0) expr]
+         [(< n 0) ; todo: display message here
+                  form]
+         [else    (let loop ([expr expr] [n n])
+                    (cond
+                      [(= n 0) expr]
+                      [else    (loop (Form f (list expr)) (- n 1))]))])]
+      [else form])))
 
 
 ; Out[]
@@ -1907,6 +1921,10 @@
            (equal? (FullForm (Level (List 1 (List 2 (List 3) 4)) (List -3)))  '(List (List 2 (List 3) 4)))
            (equal? (FullForm (Level (List 1 (List 2 (List 3) 4)) (List -4)))  '(List (List 1 (List 2 (List 3) 4))))
            (equal? (FullForm (Level (List 1 (List 2 (List 3) 4)) (List -5)))  '(List)))
+      "Nest"
+      (and (equal? (FullForm (Nest 'f 'x 3)) '(f (f (f x))))
+           (equal? (FullForm (Nest 'f 'x 0)) 'x))
+           
            
       "Exposed Bug"
       (and  (equal? (Order (Power 'y -1) (Power 'x -1)) -1))
