@@ -15,11 +15,14 @@
          racket/match
          racket/port
          racket/promise
+         racket/string
          racket/vector
          racket/sequence
          "for-parts.rkt"
          "vector-utils.rkt"
          "match-utils.rkt")
+
+(require infix/parser)
 
 (require (for-syntax syntax/for-body syntax/parse racket/syntax racket/base)
          syntax/parse/define)
@@ -1785,7 +1788,23 @@
       [(list?   s) (map convert s)]
       [else        s]))
 
-  (FromRacketCAS (convert (read))))
+  (FromRacketCAS (convert (read-infix))))
+
+; (read-infix)
+;   Read infix expression from standard input port.
+;   Lines are collected until a full expression can be read.
+(define (read-infix)
+  (define infix-stx
+    (let loop ([lines '()])
+      (define line (read-line))    
+      (with-handlers ([exn:fail:syntax?
+                       (λ _
+                         (loop (cons line lines)))])
+        (parse-math-string (string-append* (reverse (cons line lines)))))))
+
+  (define s-expr    (cadr (syntax->datum infix-stx)))
+  
+  s-expr)
 
 
 (define (repl)
@@ -1815,7 +1834,7 @@
        ; (define result (time (Eval expr)))
        (define result (Eval expr))
        (session-out! session i result)
-       (display-out-message i (FullForm result))
+       (display-out-message i (InputForm result))
        (loop (+ i 1))]))
   (loop))
 
