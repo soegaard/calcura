@@ -1675,6 +1675,26 @@
                       [else    (loop (Form f (list expr)) (- n 1))]))])]
       [else form])))
 
+; NestList[f, expr, n]
+;   Return a list of Nest[f,x,0], ..., Nest[f,x,n].
+(define-command NestList #:attributes '(Protected)
+  (λ (form)
+    (match-parts form
+      [(f expr (integer: n))
+       (cond
+         [(= n 0) (List expr)]
+         [(< n 0) ; todo: display message here
+                  form]
+         [else    (define exprs
+                    (for/fold ([es (list expr)])
+                              ([i  (in-range n)])
+                      (define e (Form f (list (car es))))
+                      (cons e es)))
+                  (Form 'List (reverse exprs))])]
+      [else form])))
+
+
+
 
 ; Out[]
 ;   The last output expression.
@@ -1924,6 +1944,9 @@
       "Nest"
       (and (equal? (FullForm (Nest 'f 'x 3)) '(f (f (f x))))
            (equal? (FullForm (Nest 'f 'x 0)) 'x))
+      "NestList"
+      (and (equal? (FullForm (NestList 'f 'x 3)) '(List x (f x) (f (f x)) (f (f (f x)))))
+           (equal? (FullForm (NestList 'f 'x 0)) '(List x)))
            
            
       "Exposed Bug"
