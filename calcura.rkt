@@ -285,7 +285,7 @@
          (unless (form? form-val)
            (raise-syntax-error 'match-form (~a "expected form, got: " form-val)))
          (match form-val
-           [(form _ 'head-sym _ (vector #f elem-pat ...)) . more]
+           [(form _ 'head-sym (vector #f elem-pat ...)) . more]
            ...
            [_ (raise-syntax-error 'match-form (~a "no matching clause for " form-val))])))]
     [(_match-form form-expr [(head-sym elem-pat ...) . more] ... [else . more-else])
@@ -294,7 +294,7 @@
          (unless (form? form-val)
            (raise-syntax-error 'match-form (~a "expected form, got: " form-val)))
          (match form-val
-           [(form _ 'head-sym _ (vector #f elem-pat ...)) . more]
+           [(form _ 'head-sym (vector #f elem-pat ...)) . more]
            ...
            [_ . more-else])))]))
 
@@ -1647,6 +1647,73 @@
               [(equal? x y) 1]
               [else         (Times x (Power y -1))])]
       [else form])))
+
+(define (terms->sum exprs)
+  (match exprs
+    [(list)   0]
+    [(list e) e]
+    [_        (Form 'Plus exprs)]))
+
+
+(define-command == #:attributes '(Protected)
+  (λ (form)
+    form))
+    
+; Expand[expr]
+;   Products and powers with positive, integer exponents are expanded.
+(define-command Expand #:attributes '(Protected)
+  (λ (form)
+    ; (displayln (FullForm form))
+    (match-parts form
+      ; Expand products
+      [( (form: (Times (form: (Plus expr1 ...)) (form: (Plus expr2 ...)))) )
+       (MakeForm 'Plus (for*/parts ([e1 (in-list expr1)]
+                                    [e2 (in-list expr2)])
+                         (Times e1 e2)))]
+      [( (form: (Times (form: (Plus expr1 ...)) expr2)) )
+       (MakeForm 'Plus (for/parts ([e1 (in-list expr1)])
+                         (Times e1 expr2)))]
+      [( (form: (Times expr1 (form: (Plus expr2 ...)))) )
+       (MakeForm 'Plus (for/parts ([e2 (in-list expr2)])
+                         (Times expr1 e2)))]
+      ; Expand top-level terms
+      [( (form: (Plus expr1 ...)) )
+       (MakeForm 'Plus (for/parts ([e1 (in-list expr1)])
+                         (Expand e1)))]
+
+      ; Expand powers
+      ;   n=2
+      [( (form: (Power (form: (Plus expr1 expr2 ...)) 2)) )
+       (define terms (terms->sum expr2))
+       (Plus (Power expr1 2) 
+             (Expand (Times 2 expr1 terms))
+             (Expand (Power terms 2)))]
+      ;   n>=3, odd
+      [( (form: (Power (and e (form: (Plus expr1 expr2 ...)))
+                       (and (integer: n) (? odd? n)))) )
+       (define expr2-sum (terms->sum expr2))
+       (define t         (Expand (Power e (- n 1))))
+       (Expand (Plus (Times expr1 t) (Times expr2-sum t)))]
+      ;   n>=3, even
+      [( (form: (Power (and e (form: (Plus expr1 expr2 ...)))
+                       (and (integer: n) (? even? n)))) )
+       (define expr2-sum (terms->sum expr2))
+       (define t         (Expand (Power e (/ n 2))))
+       (Expand (Times t t))]
+
+      ; Distribute over equations
+      [( (form: (== lhs rhs)) )
+       (Form '== (Expand lhs) (Expand rhs))]
+
+      ; Distribute over lists
+      [( (form: (List expr ...)) )
+       (Form 'List (map Expand expr))]      
+         
+      ; Nothing to expand
+      [( expr ) expr]
+      
+      [else form])))
+
 
 ;;;
 ;;; Function Iteration
