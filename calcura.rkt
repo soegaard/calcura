@@ -1702,12 +1702,18 @@
        (Expand (Times t t))]
 
       ; Distribute over equations
-      [( (form: (== lhs rhs)) )
-       (Form '== (Expand lhs) (Expand rhs))]
+      [( (form: (== lhs rhs)) ) (Form '== (Expand lhs) (Expand rhs))]
+      [( (form: (<= lhs rhs)) ) (Form '<= (Expand lhs) (Expand rhs))]
+      [( (form: (>= lhs rhs)) ) (Form '>= (Expand lhs) (Expand rhs))]
+      [( (form: (<  lhs rhs)) ) (Form '<  (Expand lhs) (Expand rhs))]
+      [( (form: (>  lhs rhs)) ) (Form '>  (Expand lhs) (Expand rhs))]
+      ; Distribute over logical functions
+      [( (form: (And lhs rhs)) ) (Form 'And (Expand lhs) (Expand rhs))]
+      [( (form: (Or  lhs rhs)) ) (Form 'Or  (Expand lhs) (Expand rhs))]
 
       ; Distribute over lists
       [( (form: (List expr ...)) )
-       (Form 'List (map Expand expr))]      
+       (Form 'List (map Expand expr))]
          
       ; Nothing to expand
       [( expr ) expr]
