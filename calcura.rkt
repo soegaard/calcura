@@ -23,6 +23,9 @@
          "match-utils.rkt")
 
 (require infix/parser)
+(require (rename-in racket-cas/format
+                    [~ racket-cas-format]))
+
 
 (require (for-syntax syntax/for-body syntax/parse racket/syntax racket/base)
          syntax/parse/define)
@@ -207,7 +210,8 @@
             [else      (display x)])))))
   (output-tree (out full)))
 
-
+(define (TraditionalForm expr)
+  (racket-cas-format (ToRacketCAS expr)))
 
 
 (define in-elements
@@ -1834,7 +1838,7 @@
        ; (define result (time (Eval expr)))
        (define result (Eval expr))
        (session-out! session i result)
-       (display-out-message i (InputForm result))
+       (display-out-message i (TraditionalForm result))
        (loop (+ i 1))]))
   (loop))
 
@@ -1842,22 +1846,28 @@
 ;;; RacketCAS
 ;;; 
 
+; We will eventually implement a new formatter from scratch.
+; At that point we can get rid of the racket-cas formatter.
+; Until then, it is convenient to reuse the old formatter.
+
+(define racket-cas-names
+  (hasheq '+    'Plus
+          '-    'Minus
+          '*    'Times
+          '/    'Divide
+          'sqrt 'Sqrt
+          'expt 'Power
+          'exp  'Exp
+          'sin  'Sin
+          'cos  'Cos
+          'tan  'Tan
+          'log  'Log))
 
 ; FromRacketCAS : S-expression -> Expression
 ;   This converts an s-expression using standard Racket notation
 ;   (as used in racket-cas) to an Expression used by Calcura.
 (define (FromRacketCAS s-expr)
-  (define names (hasheq '+    'Plus
-                        '-    'Minus
-                        '*    'Times
-                        '/    'Divide
-                        'sqrt 'Sqrt
-                        'expt 'Power
-                        'exp  'Exp
-                        'sin  'Sin
-                        'cos  'Cos
-                        'tan  'Tan
-                        'log  'Log))
+  (define names racket-cas-names)
 
   (define (convert-symbol s)
     (hash-ref names s s))
@@ -1869,6 +1879,34 @@
       [else        s]))
 
   (ToExpression (convert s-expr)))
+
+
+; ToRacketCAS :  Expression -> S-expression
+;   This converts a Calcura Expression into an S-expression using standard 
+;   Racket notation (as used in racket-cas). 
+
+(define (ToRacketCAS expr)
+  ; (invert-hash-table ht)
+  ;   Return hash table where the keys and values are swapped.
+  ;   Assume the mapping is one-to-one.
+  (define (invert-hash-table ht)
+    (for/hasheq ([(key val) (in-hash ht)])
+      (values val key)))  
+
+  (define names (invert-hash-table racket-cas-names))
+
+  (define (convert-symbol e)
+    (hash-ref names e e))
+  
+  (define (convert e)    
+    (cond
+      [(symbol? e) (convert-symbol e)]
+      [(form?   e) (map convert
+                        (cons (Head e) (form-elements e)))]
+      [else        e]))
+
+  (convert expr))
+
 
 
 
