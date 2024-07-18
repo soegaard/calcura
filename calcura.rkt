@@ -1661,6 +1661,7 @@
     
 ; Expand[expr]
 ;   Products and powers with positive, integer exponents are expanded.
+;   Operates on top-level.
 (define-command Expand #:attributes '(Protected)
   (λ (form)
     ; (displayln (FullForm form))
@@ -1680,7 +1681,6 @@
       [( (form: (Plus expr1 ...)) )
        (MakeForm 'Plus (for/parts ([e1 (in-list expr1)])
                          (Expand e1)))]
-
       ; Expand powers
       ;   n=2
       [( (form: (Power (form: (Plus expr1 expr2 ...)) 2)) )
@@ -1690,17 +1690,15 @@
              (Expand (Power terms 2)))]
       ;   n>=3, odd
       [( (form: (Power (and e (form: (Plus expr1 expr2 ...)))
-                       (and (integer: n) (? odd? n)))) )
+                       (and (integer: n) (? positive? n) (? odd? n)))) )
        (define expr2-sum (terms->sum expr2))
        (define t         (Expand (Power e (- n 1))))
        (Expand (Plus (Times expr1 t) (Times expr2-sum t)))]
       ;   n>=3, even
       [( (form: (Power (and e (form: (Plus expr1 expr2 ...)))
-                       (and (integer: n) (? even? n)))) )
-       (define expr2-sum (terms->sum expr2))
-       (define t         (Expand (Power e (/ n 2))))
+                       (and (integer: n) (? positive? n) (? even? n)))) )
+       (define t (Expand (Power e (/ n 2))))
        (Expand (Times t t))]
-
       ; Distribute over equations
       [( (form: (== lhs rhs)) ) (Form '== (Expand lhs) (Expand rhs))]
       [( (form: (<= lhs rhs)) ) (Form '<= (Expand lhs) (Expand rhs))]
@@ -1710,14 +1708,66 @@
       ; Distribute over logical functions
       [( (form: (And lhs rhs)) ) (Form 'And (Expand lhs) (Expand rhs))]
       [( (form: (Or  lhs rhs)) ) (Form 'Or  (Expand lhs) (Expand rhs))]
-
       ; Distribute over lists
       [( (form: (List expr ...)) )
        (Form 'List (map Expand expr))]
-         
       ; Nothing to expand
       [( expr ) expr]
-      
+      ; Not a single argument
+      [else form])))
+
+; ExpandAll[expr]
+;   Products and powers with positive, integer exponents are expanded.
+;   Operates on every level of `expr`.
+(define-command ExpandAll #:attributes '(Protected)
+  (λ (form)
+    (displayln (FullForm form))
+    (match-parts form
+      ; Expand products
+      [( (form: (Times (form: (Plus expr1 ...)) (form: (Plus expr2 ...)))) )
+       (MakeForm 'Plus (for*/parts ([e1 (in-list expr1)]
+                                    [e2 (in-list expr2)])
+                         (ExpandAll (Times e1 e2))))]
+      [( (form: (Times (form: (Plus expr1 ...)) expr2)) )
+       (MakeForm 'Plus (for/parts ([e1 (in-list expr1)])
+                         (ExpandAll (Times e1 expr2))))]
+      [( (form: (Times expr1 (form: (Plus expr2 ...)))) )
+       (MakeForm 'Plus (for/parts ([e2 (in-list expr2)])
+                         (ExpandAll (Times expr1 e2))))]
+      ; Expand top-level terms
+      [( (form: (Plus expr1 ...)) )
+       (MakeForm 'Plus (for/parts ([e1 (in-list expr1)])
+                         (ExpandAll e1)))]
+      ; Expand powers
+      ;   n=2
+      [( (form: (Power (form: (Plus expr1 expr2 ...)) 2)) )
+       (define terms (terms->sum expr2))
+       (Plus (ExpandAll (Power expr1 2)) 
+             (ExpandAll (Times 2 expr1 terms))
+             (ExpandAll (Power terms 2)))]
+      ;   n>=3, odd
+      [( (form: (Power (and e (form: (Plus expr1 expr2 ...)))
+                       (and (integer: n) (? positive? n) (? odd? n)))) )
+       (define expr2-sum (terms->sum expr2))
+       (define t         (ExpandAll (Power e (- n 1))))
+       (ExpandAll (Plus (Times expr1 t) (Times expr2-sum t)))]
+      ;   n>=3, even
+      [( (form: (Power (and e (form: (Plus expr1 expr2 ...)))
+                       (and (integer: n) (? positive? n) (? even? n)))) )
+       (define t (Power e (/ n 2)))
+       (ExpandAll (Times t t))]
+      ;   n negative
+      [( (form: (Power (and e (form: (Plus expr1 expr2 ...)))
+                       (and (integer: n) (? negative? n)))) )
+       (define t (ExpandAll (Power e (- n))))
+       (Power t -1)]      
+      ; Distribute over function applications
+      [( (form: f) )
+       (Form (ExpandAll (form-head f))
+             (map ExpandAll (form-elements f)))]
+      ; Nothing to expand
+      [( expr ) expr]
+      ; Not a single argument
       [else form])))
 
 
