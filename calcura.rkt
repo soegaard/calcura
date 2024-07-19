@@ -921,6 +921,8 @@
     [(_ term)                              (MakeForm 'Times (vector #f coef term))]
     [(_ _)                                 (error 'term-replace-coefficient)]))
 
+
+
 (define-command Order #:attributes '(Protected)
   (let ()
     ; The following Times-related functions are used
@@ -982,27 +984,38 @@
         [else           -1]))
     (define (SymbolOrder a b)
       (StringOrder (symbol->string a) (symbol->string b)))
-    (define (FormOrder a b)
+    (define (FormOrder a b)      
       (define la (Length a))
       (define lb (Length b))
+      (define ha (form-head a))
+      (define hb (form-head b))
       (cond
         [(< la lb)  1]
         [(> la lb) -1]
-        [else     (case (Order (Head a) (Head b))
-                    [( 1)  1]
-                    [(-1) -1]
-                    [else 
-                     (define res (for/or ([ea (in-elements a)]
-                                          [eb (in-elements b)])
-                                   (case (Order ea eb)
-                                     [( 1)    1]
-                                     [(-1)   -1]
-                                     [else   #f])))
-                          (or res
-                              0)])]))
+        [else     
+         ; Times and Power forms are always first.
+         (cond
+           [(and      (eq? ha 'Times)  (not (eq? hb 'Times)))  1]
+           [(and (not (eq? ha 'Times))      (eq? hb 'Times))  -1]
+           [(and      (eq? ha 'Power)  (not (eq? hb 'Power)))  1]
+           [(and (not (eq? ha 'Power))      (eq? hb 'Power))  -1]
+           [else
+            (case (Order (Head a) (Head b))
+              [( 1)  1]
+              [(-1) -1]
+              [else 
+               (define res (for/or ([ea (in-elements a)]
+                                    [eb (in-elements b)])
+                             (case (Order ea eb)
+                               [( 1)    1]
+                               [(-1)   -1]
+                               [else   #f])))
+               (or res
+                   0)])])]))
     (define (power?         f) (and (form? f) (= (form-length f) 2) (eq? (form-head f) 'Power)))
     (define (power-base     f) (form-ref f 1))
     (define (power-exponent f) (form-ref f 2))
+    
     (λ (form)
       (case (form-length form)
         [(2) (define a (form-ref form 1))
@@ -1019,10 +1032,27 @@
                   [(1)   (BooleanOrder a b)]
                   [(2)   (StringOrder  a b)]
                   [(100) ; Symbols and forms both end up here
+                   (define (degree-times   tf)
+                     (for/sum ([f (in-elements tf)])
+                       (degree f)))
+                   (define (degree f)
+                     (match f
+                       [(symbol: _)         1]
+                       [(atom:   _)         0]
+                       [(form: _ 'Times)    (degree-times f)]
+                       [(form: (Power _ r)) r]
+                       [else                +inf.0]))
+                   (define da (degree a))
+                   (define db (degree b))
                    (cond
+                     ; terms with low "degrees" come first
+                     [(< da db)  1]
+                     [(> da db) -1]
+                     ; the terms have the same "degree"
+                     
                      ; Case: At least one symbol.
                      [(and (symbol? a) (symbol? b))  (SymbolOrder a b)]
-                     [(and (symbol? a) (times?  b))  (if (eq? (times-variable a) (times-variable b))
+                     [(and (symbol? a) (times?  b))  (if (eq? a (times-variable b))
                                                          (NumberOrder 1 (times-coefficient b))
                                                          (SymbolOrder a (times-variable    b)))]
                      [(and (symbol? a) (power? b))   (if (eq? a (power-base b))
@@ -1553,12 +1583,14 @@
 ;   Since the arguments are sorted, we can assume the numbers
 ;   are at the beginning.
 
+
+
 (define-command Plus #:attributes '(Flat Listable NumericFunction OneIdentity Orderless Protected)
   (λ (form)
     ; (displayln (FullForm form))
-    (define (same? x y)
+    (define (same? u v)
       ; The complication is that x and 3*x must be collected into one term.
-      (match* (x y)
+      (match* (u v)
         ; Note: The (x x) only works if the attribute fields are the same
         ; [(x x)                                                               #t]
         ; First argument is a symbol
@@ -1574,6 +1606,10 @@
         ; [((form: (Times             x ...)) (form: (Times             x ...))) #t]
         ; [((form: (Times (number: _) x ...)) (form: (Times             x ...))) #t]
         ; [((form: (Times             x ...)) (form: (Times (number: _) x ...))) #t]
+        [((form: (Power x r)) (form: (Power x s))) (= r s)]
+        [((form: (Power x r)) (form: (Power y s))) #f]
+        [((form: (Power x r)) (form: (Times k (form: (Power x s))))) (= r s)]
+        [((form: (Times k (form: (Power x s)))) (form: (Power x r))) (= r s)]
         
         ; First argument is a general form
         [((and (head: h) (elements: x ...)) (and (head: h) (elements: x ...))) #t]  ; same as (x x) but ignores attributes
@@ -1614,12 +1650,12 @@
          [(null? others) sum]
          [else
           (define result-parts  (collect-vector #:length (if (exact-zero? sum) n (+ n 1))
-                                                (λ (collect)
-                                                  (collect #f) 
-                                                  (unless (exact-zero? sum)
-                                                    (collect sum))
-                                                  (for ([span (in-list others)])
-                                                    (collect (sum-span parts span))))))
+                                  (λ (collect)
+                                    (collect #f) 
+                                    (unless (exact-zero? sum)
+                                      (collect sum))
+                                    (for ([span (in-list others)])
+                                      (collect (sum-span parts span))))))
 
           ; Since Plus[term]=term examine the number of parts here.
           (if (= (parts-length result-parts) 1)
@@ -2090,6 +2126,10 @@
             (equal? (FullForm (Power (Times 'a 'b 'c) 3))  '(Times (Power a 3) (Power b 3) (Power c 3)))
             (equal? (FullForm (Power (Times 'a 'b)    'x)) '(Power (Times a b) x))
             (equal? (FullForm (Power (Power 'x 2) 3))      '(Power x 6))            
+            )
+      "Expand"
+      (and  (equal? (FullForm (Eval (Expand (Power (Plus 'x 1) 3))))          ; Expand[(x+1)^3]
+                    '(Plus 1 (Times 3 x) (Times 3 (Power x 2)) (Power x 3)))  ; 1+3*x+3*x^2+x^3
             )
       "Depth"
       (and  (equal? (Depth 1)                   1)
