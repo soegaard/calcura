@@ -22,6 +22,8 @@
          "vector-utils.rkt"
          "match-utils.rkt")
 
+(require (only-in math/flonum fllogb))
+
 (require infix/parser)
 (require (rename-in racket-cas/format
                     [~ racket-cas-format]))
@@ -340,18 +342,21 @@
 (define (exact-one? x)        (and (number? x) (exact? x) (= x 1)))
 (define (positive-integer? x) (and (number? x) (exact? x) (> x 0)))
 (define (negative-integer? x) (and (number? x) (exact? x) (< x 0)))
+(define (inexact-real x)      (and (number? x) (inexact? x) (real? x)))
 
-(define-match-expanders ([integer:  exact-integer?]
-                         [rational: exact-rational?]
-                         [real:     real?]
-                         [complex:  complex?]
-                         [symbol:   symbol?]
-                         [atom:     atom?]
-                         [boolean:  boolean?]
-                         [string:   string?]
-                         [number:   number?]
-                         [zero:     exact-zero?]
-                         [one:      exact-one?]
+
+(define-match-expanders ([integer:       exact-integer?]
+                         [rational:      exact-rational?]
+                         [real:          real?]
+                         [inexact-real:  inexact-real?]
+                         [complex:       complex?]
+                         [symbol:        symbol?]
+                         [atom:          atom?]
+                         [boolean:       boolean?]
+                         [string:        string?]
+                         [number:        number?]
+                         [zero:          exact-zero?]
+                         [one:           exact-one?]
                          [positive-integer:  positive-integer?]
                          [negative-integer:  negative-integer?]))
 
@@ -1808,7 +1813,7 @@
       [else form])))
 
 ;;;
-;;; Trigonometric
+;;; Trigonometric Functions
 ;;;
 
 (define-command Cos #:attributes '(Listable NumericFunction Protected)
@@ -1822,6 +1827,38 @@
 (define-command Tan #:attributes '(Listable NumericFunction Protected)
   (λ (form)
     form))
+
+;;;
+;;; Natural Exponential
+;;;
+
+(define-command Exp #:attributes '(Listable NumericFunction Protected ReadProtected)
+  (λ (form)
+    (match-parts form
+      [(expr) (Power 'E expr)]
+      [else   form])))
+
+;;;
+;;; Natural Logarithm
+;;;
+
+; Log[z]
+;  Natural logarithm of `z` (that is base e)
+; Log[b, z]
+;  Base `b` logarithm of `z`.
+(define-command Log #:attributes '(Listable NumericFunction Protected)
+  (λ (form)
+    (match-parts form
+      ; Log[z] natural 
+      [(1)                    0]
+      [('E)                   1]
+      [((inexact-real: r))    (log r)]
+      [((form: (Power 'E u))) u]
+      [(0)                    (Minus 'Infinity)]
+      ; Log[b, z] base b
+      [((inexact-real: b) (inexact-real: r)) (fllogb b r)]        
+      ;
+      [else   form])))
 
 
 
