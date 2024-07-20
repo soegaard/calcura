@@ -1064,6 +1064,7 @@
                      [(and (power? a) (symbol? b))   (if (eq? (power-base a) b)
                                                          -1 ; symbol first
                                                          (Order (power-base     a) a))]
+                     ; todo: power and times with same degree
 
                      ; symbol and Times[number, symbol] are treated the same
                      ; 
@@ -1806,6 +1807,23 @@
       ; Not a single argument
       [else form])))
 
+;;;
+;;; Trigonometric
+;;;
+
+(define-command Cos #:attributes '(Listable NumericFunction Protected)
+  (λ (form)
+    form))
+
+(define-command Sin #:attributes '(Listable NumericFunction Protected)
+  (λ (form)
+    form))
+
+(define-command Tan #:attributes '(Listable NumericFunction Protected)
+  (λ (form)
+    form))
+
+
 
 ;;;
 ;;; Function Iteration
@@ -2130,6 +2148,10 @@
       "Expand"
       (and  (equal? (FullForm (Eval (Expand (Power (Plus 'x 1) 3))))          ; Expand[(x+1)^3]
                     '(Plus 1 (Times 3 x) (Times 3 (Power x 2)) (Power x 3)))  ; 1+3*x+3*x^2+x^3
+            )
+      "ExpandAll"
+      (and  (equal? (FullForm (Eval (ExpandAll (Sin (Power (Plus 'x 1) 2)))))  ; Expand[Sin[(x+1)^2]]
+                    '(Sin (Plus 1 (Times 2 x) (Power x 2))))                   ; Sin[1 + 2 x + x^2 ]
             )
       "Depth"
       (and  (equal? (Depth 1)                   1)
