@@ -18,11 +18,11 @@
          racket/string
          racket/vector
          racket/sequence
+         math/flonum
+         (except-in math/number-theory permutations)
          "for-parts.rkt"
          "vector-utils.rkt"
          "match-utils.rkt")
-
-(require (only-in math/flonum fllogb))
 
 (require infix/parser)
 (require (rename-in racket-cas/format
@@ -1835,11 +1835,12 @@
 (define-command Exp #:attributes '(Listable NumericFunction Protected ReadProtected)
   (λ (form)
     (match-parts form
-      [(expr) (Power 'E expr)]
-      [else   form])))
+      [((form: (Log u))) u]
+      [(expr)            (Power 'E expr)]
+      [else              form])))
 
 ;;;
-;;; Natural Logarithm
+;;; Logarithms
 ;;;
 
 ; Log[z]
@@ -1856,9 +1857,44 @@
       [((form: (Power 'E u))) u]
       [(0)                    (Minus 'Infinity)]
       ; Log[b, z] base b
-      [((inexact-real: b) (inexact-real: r)) (fllogb b r)]        
-      ;
-      [else   form])))
+      [((real: b)          (inexact-real: r))    (displayln 'here3) (fllogb (fl b) r)]
+      [((inexact-real: b)  (real: r))            (fllogb b  (fl r))]
+      [((integer: b)       (integer: r))         (integer-log b r)]
+      [(b                  z)                    (Divide (Log z) (Log b))]
+      ; otherwise
+      [else form])))
+
+
+(define (integer-log b r)
+  (define (int-log)
+    (define m (max-dividing-power b r))
+    (cond
+      [(= (expt b m) r) m]                                                     
+      [else
+       (define n (max-dividing-power r b))
+       (cond
+         [(= (expt r n) b) (/ 1 n)]
+         [else form])]))
+  (define l (fllogb (fl b) (fl r))) ; fast path, not always possible
+  (cond
+    [(integer? l) (let ([l (inexact->exact l)])
+                    (cond
+                      [(= (expt b l) r) l]
+                      [else             (int-log)]))]    
+    [else         (int-log)]))
+
+
+(define-command Log10 #:attributes '(Listable NumericFunction Protected)
+  (λ (form)
+    (match-parts form
+      [(z) (Log 10 z)]
+      [else form])))
+
+(define-command Log2 #:attributes '(Listable NumericFunction Protected)
+  (λ (form)
+    (match-parts form
+      [(z) (Log 2 z)]
+      [else form])))
 
 
 
@@ -2182,6 +2218,17 @@
             (equal? (FullForm (Power (Times 'a 'b)    'x)) '(Power (Times a b) x))
             (equal? (FullForm (Power (Power 'x 2) 3))      '(Power x 6))            
             )
+      "Natural Logarithm"
+      (list (equal? (Log 1)  0)
+            (equal? (Log 1.) 0.)
+            (equal? (Log 'E) 1)
+            (equal? (Log (Power 'E 'n)) 'n)
+            (equal? (Log (Exp 2)) 2)
+            (equal? (Log 2. 8.) 3.)
+            (equal? (Log 2  8.) 3.)
+            (equal? (Log 2. 8)  3.)
+            (equal? (Log 2  8)  3))
+           
       "Expand"
       (and  (equal? (FullForm (Eval (Expand (Power (Plus 'x 1) 3))))          ; Expand[(x+1)^3]
                     '(Plus 1 (Times 3 x) (Times 3 (Power x 2)) (Power x 3)))  ; 1+3*x+3*x^2+x^3
