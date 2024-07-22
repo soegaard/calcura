@@ -13,6 +13,7 @@
          racket/hash-code
          racket/list
          racket/match
+         (prefix-in match: racket/match) ; for ==
          racket/port
          racket/promise
          racket/string
@@ -340,25 +341,59 @@
 
 (define (exact-zero? x)       (and (number? x) (exact? x) (zero? x)))
 (define (exact-one? x)        (and (number? x) (exact? x) (= x 1)))
+
 (define (positive-integer? x) (and (number? x) (exact? x) (> x 0)))
 (define (negative-integer? x) (and (number? x) (exact? x) (< x 0)))
+
+(define (exact-rational? x)   (and (number? x) (exact? x) (real? x)))
+
 (define (inexact-real x)      (and (number? x) (inexact? x) (real? x)))
+(define (negative-real? x)    (and (real?   x) (negative? x)))
+(define (positive-real? x)    (and (real?   x) (positive? x)))
+  
 
+(define (numeric? x)
+  ; explicit numbers or mathematical constants
+  (or (memq x '(Pi E))
+      (number? x)))
 
-(define-match-expanders ([integer:       exact-integer?]
-                         [rational:      exact-rational?]
-                         [real:          real?]
+(define (N expr)
+  (match expr
+    ['Pi            3.141592653589793]
+    ['E             2.718281828459045]
+    [(number: expr) (fl expr)]
+    [_              (error 'N (~a "got: " expr))]))
+
+(define-match-expanders ([zero:          exact-zero?]
+                         [one:           exact-one?]
+
+                         [integer:       exact-integer?]
+                         [flonum:        flonum?]
                          [inexact-real:  inexact-real?]
+
+                         [real:          real?]
                          [complex:       complex?]
+                         [number:        number?]
+                         [numeric:       numeric?]
+
+                         [positive-integer:  positive-integer?]
+                         [negative-integer:  negative-integer?]
+                         [positive-real:     positive-real?]
+                         [negative-real:     negative-real?]
+                                                  
                          [symbol:        symbol?]
                          [atom:          atom?]
                          [boolean:       boolean?]
-                         [string:        string?]
-                         [number:        number?]
-                         [zero:          exact-zero?]
-                         [one:           exact-one?]
-                         [positive-integer:  positive-integer?]
-                         [negative-integer:  negative-integer?]))
+                         [string:        string?]))
+
+(define-match-expander rational:
+  (λ (stx)
+    (syntax-case stx (_)
+      [(_name: _)   (syntax/loc stx (? exact-rational?))]
+      [(_name: x)   (syntax/loc stx (? exact-rational? x))]
+      [(_name: p q) (syntax/loc stx (and (? exact-rational?)
+                                         (app numerator   p)
+                                         (app denominator q)))])))
 
 ; (form: _)                      match any form
 ; (form: x)                      match any form, bind it to x
@@ -1050,33 +1085,37 @@
                    (define da (degree a))
                    (define db (degree b))
                    (cond
-                     ; terms with low "degrees" come first
-                     [(< da db)  1]
-                     [(> da db) -1]
                      ; the terms have the same "degree"
                      
                      ; Case: At least one symbol.
                      [(and (symbol? a) (symbol? b))  (SymbolOrder a b)]
-                     [(and (symbol? a) (times?  b))  (if (eq? a (times-variable b))
-                                                         (NumberOrder 1 (times-coefficient b))
-                                                         (SymbolOrder a (times-variable    b)))]
-                     [(and (symbol? a) (power? b))   (if (eq? a (power-base b))
-                                                         1 ; symbol first
-                                                         (Order a (power-base     b)))]
-                     [(and (times? a) (symbol? b))   (if (eq? (times-variable a) b)
-                                                         (NumberOrder (times-coefficient a) 1)
-                                                         (SymbolOrder (times-variable    a) b))]
-                     [(and (power? a) (symbol? b))   (if (eq? (power-base a) b)
-                                                         -1 ; symbol first
-                                                         (Order (power-base     a) a))]
-                     ; todo: power and times with same degree
-
-                     ; symbol and Times[number, symbol] are treated the same
-                     ; 
-                     [(and (times? a) (times? b)) (if (eq? (times-variable a) (times-variable b))
-                                                      (NumberOrder (times-coefficient a) (times-coefficient b))
-                                                      (SymbolOrder (times-variable    a) (times-variable    b)))]
-                     [else                        (FormOrder a b)])]
+                     [(symbol? b)                    (- 1 (Order b a))]
+                     [(symbol? a)                    (match b
+                                                       [(form: (Power (match:== a) v))             (Order 1 v)]
+                                                       [(form: (Power u      v))                   (Order a u)]
+                                                       [(form: (Times (numeric: r) (match:== a)))  (NumberOrder 1 (N r))]
+                                                       [(form: (Times (numeric: _) u _ ...))       (Order a u)]
+                                                       [(form: (Times u _ ...))                    (Order a u)]
+                                                       [else                                       1])]
+                     [else                           
+                      (match* (a b)
+                        ; Case: At least one Power expression.
+                        [(a (form: (Power a u)))                   (Order 1 u)]
+                        [((form: (Power a u)) a)                   (Order u 1)]
+                        [((form: (Power u a)) (form: (Power u b))) (Order a b)]
+                        [((form: (Power u a)) (form: (Power v b))) (Order u v)]
+                        [((form: (Power u a)) (form: _))            1]
+                        [((form: _) (form: (Power u a)) )          -1]
+                        ; Case: At least one Times expression.
+                        ; [((form: (Times u a ...)) (form: (Times u b ...))) (Order a ... b ...)]
+                        [((form: _ 'Times) _)                      1]
+                        [(_ (form: _ 'Times))                      -1]
+                        [(a b)
+                         ; terms with low "degrees" come first
+                         (cond
+                           [(< da db)  1]
+                           [(> da db) -1]
+                           [else      (FormOrder a b)])])])]
                   [else  (error 'Order "internal error")])])]
         [else form]))))
 
@@ -1457,9 +1496,11 @@
   (λ (form)
     ; (displayln (FullForm form))
     (match-parts form
+      ; Power[x,y] = ...
       [(x y) (cond
                ; fast path
-               [(and (number? x) (number? y))           (expt x y)]
+               [(and (inexact-real x) (inexact-real y)) (expt x y)]
+               [(and (rational? x) (equal? y -1))       (/ 1 x)]
                ; x¹ = x 
                [(equal? y 1)                            x]
                ; x⁰ = 1
@@ -1479,6 +1520,7 @@
                
                ; default
                [else form])]
+      ; 0, 1, 3 or more arguments
       [else form])))
 
 
@@ -1504,6 +1546,7 @@
         [((symbol: x) (symbol: x))                                             #t]
         [((symbol: _) (symbol: _))                                             #f]
         [((symbol: x) (form: (Power x (real: _))))                             #t]
+        [((form: (Power x (real: _))) (symbol: x))                             #t]
         [((symbol: _) _)                                                       #f]
         ; First argument is a Times-form.
         [((form: (Power x _)) (form: (Power x _)))                             #t]
@@ -1687,7 +1730,7 @@
             (cond
               [(equal? y 0) 'ComplexInfinity]
               [(equal? x y) 1]
-              [else         (Times x (Power y -1))])]
+              [else         (Sort (Times x (Power y -1)))])]
       [else form])))
 
 (define (terms->sum exprs)
@@ -1813,6 +1856,19 @@
       [else form])))
 
 ;;;
+;;; Square Roots and Roots 
+;;;
+
+(define-command Sqrt #:attributes '(Listable NumericFunction Protected)
+  ; TODO: stub for now
+  (λ (form)
+    (match-parts form
+      [(z) (match z
+             [(flonum: r) (flsqrt r)]
+             [else        (Power z 1/2)])]
+      [else form])))
+
+;;;
 ;;; Trigonometric Functions
 ;;;
 
@@ -1822,7 +1878,38 @@
 
 (define-command Sin #:attributes '(Listable NumericFunction Protected)
   (λ (form)
-    form))
+    (match-parts form
+      [(z) ; argument is in radians
+       ; Sin[z] = ...
+       (match z
+         ; Numeric
+         [(flonum: r) (flsin r)]
+         ; Exact zeros
+         [0                                    0]
+         ['Pi                                  0]
+         [(form: (Times (integer: _) 'Pi))     0]
+         ; Sin is odd
+         [(form: (Times (negative-real: α) u))               (Times -1 (Sin (Times (- α) u)))]
+         ; Sin[β/2 Pi] = ±1
+         [(form: (Times α 'Pi))
+          #:when (integer? (* 2 α))                          (if (= (remainder (* 2 α) 4) 1) 1 -1)]
+         ; Sin is peridic
+         [(form: (Plus u (form: (Times (integer: k) 'Pi)))) 
+          #:when (even? k)                                   (Sin u)]
+         ;; [(⊕ u (k⊗ (Integer v) @pi)) #:when (Even? v) (Sin: u)]
+         ;; [(⊕ (k⊗ (Integer v) @pi) u) #:when (Even? v) (Sin: u)]
+         ;; [(⊕ u (k⊗ (Integer v) @pi)) #:when (Odd? v) (⊖ (Sin: u))]
+         ;; [(⊕ (k⊗ (Integer v) @pi) u) #:when (Odd? v) (⊖ (Sin: u))]
+         ;; [(⊕ u (⊗ p (Integer v) @pi)) #:when (Even? p) (Sin: u)]
+         ;; [(⊕ (⊗ p (Integer v) @pi) u) #:when (Even? p) (Sin: u)]
+         ;; [(⊕ u (⊗ p (Integer v) @pi)) #:when (Odd? p) (⊖ (Sin: u))]
+         ;; [(⊕ (⊗ p (Integer v) @pi) u) #:when (Odd? p) (⊖ (Sin: u))]
+         
+         [(form: (Times 1/3 'Pi))          (Divide (Sqrt 3) 2)]
+         [else form])]
+      ; 0, 2 or more arguments
+      [else
+       form])))
 
 (define-command Tan #:attributes '(Listable NumericFunction Protected)
   (λ (form)
@@ -1854,8 +1941,20 @@
       [(1)                    0]
       [('E)                   1]
       [((inexact-real: r))    (log r)]
-      [((form: (Power 'E u))) u]
       [(0)                    (Minus 'Infinity)]
+      [((integer: n))         (if (> n 0)
+                                  form
+                                  (Plus (Times 'I 'Pi) (Log (- n))))]
+      [((rational: p q))      (cond
+                                [(= p 1) (Minus (Log q))]
+                                [(< p 0) (Plus (Times 'I 'Pi) (Log (- (/ p q))))]
+                                [(< p q) (Minus (Log (/ q p)))]
+                                [else    form])]                                  
+      ; Mathematica requires PowerExpand for Log[Exp[z]] = z,
+      ; so there is no rule for Log[Exp[z]]=z.
+      ; Special cases for z rational is okay.     
+      [((form: (Power 'E (rational: u)))) u] 
+      
       ; Log[b, z] base b
       [((real: b)          (inexact-real: r))    (displayln 'here3) (fllogb (fl b) r)]
       [((inexact-real: b)  (real: r))            (fllogb b  (fl r))]
@@ -2209,7 +2308,8 @@
             (equal? (FullForm (Times 'x (Power 'x 2)))     '(Power x 3))
             (equal? (FullForm (Times 3 'x 'x))             '(Times 3 (Power x 2)))
             (equal? (FullForm (Times 3 'x (Power 'x 2)))   '(Times 3 (Power x 3)))
-            )
+            (equal? (FullForm (Times (Power 'x -1) 'x))    1)
+            (equal? (FullForm (Times 'x (Power 'x -1)))    1))
       "Basic Power"
       (and  (equal? (FullForm (Power 'x 0))                1)
             (equal? (FullForm (Power 1 'x))                1)
@@ -2218,17 +2318,42 @@
             (equal? (FullForm (Power (Times 'a 'b)    'x)) '(Power (Times a b) x))
             (equal? (FullForm (Power (Power 'x 2) 3))      '(Power x 6))            
             )
+      "Divide"
+      (and  (equal? (FullForm (Divide 'Pi 2))              '(Times 1/2 Pi)))  ; note the order
+      "Sqrt"
+      (and  (equal? (Sqrt 3.) (flsqrt 3.))
+            (equal? (FullForm (Sqrt 3)) '(Power 3 1/2)))
+      "Sin"
+      (list (equal? (Sin 2.)               (flsin 2.))
+            (equal? (Sin 0)                0)
+            (equal? (Sin (Divide 'Pi 2))   1)
+            (equal? (Sin 'Pi)              0)
+            (equal? (Sin (Times 3/2 'Pi)) -1)
+            (equal? (Sin (Times 2 'Pi))    0)
+            (equal? (Sin (Minus 'u))       (Minus (Sin 'u))))
       "Natural Logarithm"
-      (list (equal? (Log 1)  0)
-            (equal? (Log 1.) 0.)
+      (and  (equal? (Log 1)  0)
+            (equal? (Log 1.) 0.)            
             (equal? (Log 'E) 1)
-            (equal? (Log (Power 'E 'n)) 'n)
-            (equal? (Log (Exp 2)) 2)
-            (equal? (Log 2. 8.) 3.)
-            (equal? (Log 2  8.) 3.)
-            (equal? (Log 2. 8)  3.)
-            (equal? (Log 2  8)  3))
-           
+            (equal? (Log (Exp  2))    2)
+            (equal? (Log (Exp -2))   -2)
+            (equal? (Log (Exp  1/2))  1/2)
+            (equal? (Log (Exp -1/2)) -1/2)
+            (equal? (FullForm (Log (Power 'E 'n))) '(Log (Power E n))) ; Following M.
+            (equal? (FullForm (Log 1/2))  '(Times -1 (Log 2)))
+            (equal? (FullForm (Log 2/3))  '(Times -1 (Log 3/2)))
+            (equal? (FullForm (Log 3/2))  '(Log 3/2))
+            (equal? (FullForm (Log -2))   '(Plus (Times I Pi) (Log 2)))
+            (equal? (FullForm (Log -1/2)) '(Plus (Times I Pi) (Times -1 (Log 2)))))
+      "Logarithm with base"
+      (list (equal? (Log 2. 8.) 3.)
+           (equal? (Log 2  8.) 3.)
+           (equal? (Log 2. 8)  3.)
+           (equal? (Log 2  8)  3)
+           (equal? (Log 2 (Power 2 3)) 3)
+           (equal? (Log 2 (Power 4 3)) 6)
+           (equal? (Log 2 1/2) -1)
+           )
       "Expand"
       (and  (equal? (FullForm (Eval (Expand (Power (Plus 'x 1) 3))))          ; Expand[(x+1)^3]
                     '(Plus 1 (Times 3 x) (Times 3 (Power x 2)) (Power x 3)))  ; 1+3*x+3*x^2+x^3
@@ -2278,7 +2403,7 @@
       "Exposed Bug"
       (and  (equal? (Order (Power 'y -1) (Power 'x -1)) -1))
       "Rascas (Tests from the Rascas test suite)"
-      (and  (equal? (FullForm (Eval (Minus (Divide (Times 'x 'y) 3))))
+      (list  (equal? (FullForm (Eval (Minus (Divide (Times 'x 'y) 3))))
                     '(Times -1/3 x y))
             (equal? (FullForm (Power (Power (Power 'x 1/2) 1/2) 8))
                     '(Power x 2))
