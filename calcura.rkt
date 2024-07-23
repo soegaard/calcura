@@ -21,6 +21,7 @@
          racket/sequence
          math/flonum
          (except-in math/number-theory permutations)
+         (only-in racket/math pi sgn)
          "for-parts.rkt"
          "vector-utils.rkt"
          "match-utils.rkt")
@@ -380,7 +381,10 @@
                          [negative-integer:  negative-integer?]
                          [positive-real:     positive-real?]
                          [negative-real:     negative-real?]
-                                                  
+
+                         [odd:               (λ (x) (and (exact-integer? x) (odd?  x)))]
+                         [even:              (λ (x) (and (exact-integer? x) (even? x)))]
+                         
                          [symbol:        symbol?]
                          [atom:          atom?]
                          [boolean:       boolean?]
@@ -422,10 +426,40 @@
 ; (head: h)  match any form and bind the head to h
 (define-match-expander head:
   (λ (stx)
-    (syntax-case stx ()
+    (syntax-case stx (quote)
+      [(_head: 'name)        (syntax/loc stx (and (? form?) 
+                                                  (? (λ (x) (eq? (form-head x) 'name)))))]
+      
       [(_head: name)         (syntax/loc stx (and (? form?) 
                                                   (app (λ (x) (form-head x)) 
                                                        name)))])))
+; (ktimes: k pat)
+;   Matches if
+;     - the value matces pat then k is bound to 1.
+;     - the values is a Times[k,pat]
+
+; (ktimes: k pat ...)
+;   Matches a Times form.
+;   Binds k to the coefficient of the form.
+;   I.e. the first element of the form, if it is a number,
+;   one otherwise.
+(define-match-expander ktimes:
+  (λ (stx)
+    (syntax-case stx ()
+      [(ktimes: k pat)
+       (syntax/loc stx
+         (or (and pat (app (λ (_) 1) k))
+             (and (head: 'Times)
+                  (or (elements: (and (? number?) k) pat)
+                      (and (app (λ (_) 1) k)
+                           (elements: pat))))))]
+       
+      [(ktimes: k pat ...)
+       (syntax/loc stx
+         (and (head: 'Times)
+              (or (elements: (and (? number?) k) pat ...)
+                  (and (app (λ (_) 1) k)
+                       (elements: pat ...)))))])))
 
 ;;; Forms
 
@@ -1507,6 +1541,9 @@
                [(equal? y 0)                            1]
                ; 1^x = 1
                [(equal? x 1)                            1]
+               [(equal? y 1/2)                          (if (and (rational? x) (= (numerator x) 1))
+                                                            (Power (Power (denominator x) 1/2) -1)
+                                                            form)]
                ; (ab)^c = a^c b^c  only if c<>0 is an integer
                [(and (has-head? x 'Times) (integer? y)) (define factors (for/parts ([x (in-elements x)])
                                                                           (Power x y)))
@@ -1718,6 +1755,11 @@
     (case (form-length form)
       [(1)  (define x (form-ref form 1))
             (Times -1 x)]
+      [(2)  (define x (form-ref form 1))
+            (define y (form-ref form 2))
+            (if (exact-zero? y)
+                x
+                (Plus x (Times -1 y)))]      
       [else form])))
 
 
@@ -1730,7 +1772,9 @@
             (cond
               [(equal? y 0) 'ComplexInfinity]
               [(equal? x y) 1]
-              [else         (Sort (Times x (Power y -1)))])]
+              [else         (if (equal? x 1)
+                                (Power y -1)
+                                (Sort (Times x (Power y -1))))])]
       [else form])))
 
 (define (terms->sum exprs)
@@ -1872,44 +1916,122 @@
 ;;; Trigonometric Functions
 ;;;
 
+; [0, 2)
+(define (clamp-0-2 c)
+  (let [(n (numerator c)) (d (denominator c))]
+    (/ (modulo n (* 2 d)) d)))
+
+; [-pi, pi), i.e [-1, 1)
+; better be (-1, 1], but we can save the effort
+; clamp-0-2(c + 1) - 1
+(define (normalize-pi-coeff c)
+  (- (clamp-0-2 (+ c 1)) 1))
+
+
 (define-command Cos #:attributes '(Listable NumericFunction Protected)
-  (λ (form)
-    form))
+  (let ()
+    (define cos-pi/2-table #(1 0 -1 0))
+    (define (cos-pi/2* n) (vector-ref cos-pi/2-table (remainder n 4)))
+    
+    (λ (form)
+      ; (displayln (FullForm form))
+      (match-parts form
+        [(z) ; argument is in radians
+         ; Cos[z] = ...
+         (match z
+           [(flonum: r)                                (flcos r)]           
+           [0                                           1]
+           ['Pi                                        -1]
+           [(form: (ktimes: (integer: k) 'Pi))         (if (even? k) 1 -1)]
+           ; Cos is even
+           [(form: (Times (negative-real: α) u))       (Cos (Times (- α) u))]
+           ; Cos[β/2 Pi] 
+           [(form: (Times α 'Pi))
+            #:when (integer? (* 2 α))                  (cos-pi/2* (* 2 α))]
+           ; Cos is periodic:
+           ;   cos(u+2pi) = cos(u)   and  cos(u+pi) = - cos(u)
+           [(form: (Plus u ... (ktimes: (integer: k) 'Pi) v ...))
+            #:when (not (= k 1)) ; already reduced when k=1
+            (if (even? k)
+                (Cos (Form 'Plus (append u v)))
+                (Times -1 (Cos (Form 'Plus (append u v)))))]
+           ; Normalize coefficient
+           [(form: (Times (and α (rational: _ _)) 'Pi))
+            #:when (or (< α -1/2) (> α 1/2))
+            (cond
+              [(or (< α -1)   (> α 1))             (Cos (Times (normalize-pi-coeff α) 'Pi))]
+              [(or (< α -1/2) (> α 1/2)) (Times -1 (Cos (Times (- 1 α) 'Pi)))]
+              [else                  (error 'internal-error)])]
+           ; half angle formula
+           ;     cos( x/2 ) = ± \sqrt{ \frac{cos(x) + 1}{2} }
+           [(form: (Times (and α (rational: p (even: q))) 'Pi))
+            (let ([sign (expt -1 (floor (/ (+ α 1) 2)))])
+              (Times sign (Sqrt (Times 1/2 (Plus 1 (Cos (Times 2 α 'Pi)))))))]
+           [(form: (ArcCos u))
+            ; Note: we ignore the possibility that u is outside [-1;1].
+            u]
+           [(form: (ArcSin u))      (Sqrt (Minus 1 (Power u 2)))]
+           [(form: (Times 1/3 'Pi)) 1/2]
+
+           [else form])]
+        ; 0, 2 or more arguments
+        [else
+         form]))))
 
 (define-command Sin #:attributes '(Listable NumericFunction Protected)
-  (λ (form)
-    (match-parts form
-      [(z) ; argument is in radians
-       ; Sin[z] = ...
-       (match z
-         ; Numeric
-         [(flonum: r) (flsin r)]
-         ; Exact zeros
-         [0                                    0]
-         ['Pi                                  0]
-         [(form: (Times (integer: _) 'Pi))     0]
-         ; Sin is odd
-         [(form: (Times (negative-real: α) u))               (Times -1 (Sin (Times (- α) u)))]
-         ; Sin[β/2 Pi] = ±1
-         [(form: (Times α 'Pi))
-          #:when (integer? (* 2 α))                          (if (= (remainder (* 2 α) 4) 1) 1 -1)]
-         ; Sin is peridic
-         [(form: (Plus u (form: (Times (integer: k) 'Pi)))) 
-          #:when (even? k)                                   (Sin u)]
-         ;; [(⊕ u (k⊗ (Integer v) @pi)) #:when (Even? v) (Sin: u)]
-         ;; [(⊕ (k⊗ (Integer v) @pi) u) #:when (Even? v) (Sin: u)]
-         ;; [(⊕ u (k⊗ (Integer v) @pi)) #:when (Odd? v) (⊖ (Sin: u))]
-         ;; [(⊕ (k⊗ (Integer v) @pi) u) #:when (Odd? v) (⊖ (Sin: u))]
-         ;; [(⊕ u (⊗ p (Integer v) @pi)) #:when (Even? p) (Sin: u)]
-         ;; [(⊕ (⊗ p (Integer v) @pi) u) #:when (Even? p) (Sin: u)]
-         ;; [(⊕ u (⊗ p (Integer v) @pi)) #:when (Odd? p) (⊖ (Sin: u))]
-         ;; [(⊕ (⊗ p (Integer v) @pi) u) #:when (Odd? p) (⊖ (Sin: u))]
-         
-         [(form: (Times 1/3 'Pi))          (Divide (Sqrt 3) 2)]
-         [else form])]
-      ; 0, 2 or more arguments
-      [else
-       form])))
+  (let ()
+    ;; (define sin-pi/2-table #(0 1 0 -1))
+    ;; (define (sin-pi/2* n) (vector-ref sin-pi/2-table (remainder n 4)))
+
+    (λ (form)
+      ; (displayln (FullForm form))
+      (match-parts form
+        [(z) ; argument is in radians
+         ; Sin[z] = ...
+         (match z
+           ; Numeric
+           [(flonum: r) (flsin r)]
+           ; Exact zeros
+           [0                                    0]
+           ['Pi                                  0]
+           [(form: (Times (integer: _) 'Pi))     0]
+           ; Sin is odd
+           [(form: (Times (negative-real: α) u))       (Times -1 (Sin (Times (- α) u)))]
+           ; Sin[β/2 Pi] = ±1
+           [(form: (Times α 'Pi))
+            #:when (integer? (* 2 α))                  (if (= (remainder (* 2 α) 4) 1) 1 -1)]
+           ; Sin is periodic:
+           ;   sin(u+2pi) = sin(u)   and  sin(u+pi)=-sin(u)
+           [(form: (Plus u ... (ktimes: (integer: k) 'Pi) v ...))
+            #:when (not (= k 1)) ; already reduced when k=1
+            (if (even? k)
+                (Sin (Form 'Plus (append u v)))
+                (Sin (Form 'Plus (cons 'Pi (append u v)))))]
+           ; Normalize coefficient
+           [(form: (Times (and α (rational: _ _)) 'Pi))
+            #:when (or (< α -1/2) (> α 1/2))
+            (cond
+              [(or (< α -1) (> α 1)) (Sin (Times (normalize-pi-coeff α) 'Pi))]
+              [(> α  1/2)            (Sin (Times (- 1 α) 'Pi))]
+              [(< α -1/2)            (Sin (Times (- 1 α) 'Pi))]
+              [else                  (error 'internal-error)])]
+           ; half angle formula
+           ;     sin(x/2) = ±\sqrt{\frac{1 - cos(x)}{2}}
+           [(form: (Times (and α (rational: p (even: q))) 'Pi))
+            (let* ([θ      (* 2 α pi)]
+                   [sign.0 (sgn (+ (- (* 2 pi) θ) (* 4 pi (floor (/ θ (* 4 pi))))))]
+                   [sign   (if (> sign.0 0) 1 -1)])
+              (Times sign (Sqrt (Times 1/2 (Minus 1 (Cos (Times 2 α 'Pi)))))))]
+           [(form: (ArcSin u))
+            ; Note: we ignore the possibility that u is outside [-1;1].
+            u]
+           [(form: (ArcCos u))      (Sqrt (Minus 1 (Power u 2)))]
+           [(form: (Times 1/3 'Pi)) (Divide (Sqrt 3) 2)]
+
+           [else form])]
+        ; 0, 2 or more arguments
+        [else
+         form]))))
 
 (define-command Tan #:attributes '(Listable NumericFunction Protected)
   (λ (form)
@@ -2326,11 +2448,45 @@
       "Sin"
       (list (equal? (Sin 2.)               (flsin 2.))
             (equal? (Sin 0)                0)
-            (equal? (Sin (Divide 'Pi 2))   1)
             (equal? (Sin 'Pi)              0)
-            (equal? (Sin (Times 3/2 'Pi)) -1)
-            (equal? (Sin (Times 2 'Pi))    0)
-            (equal? (Sin (Minus 'u))       (Minus (Sin 'u))))
+            (equal? (Sin (Times  2 'Pi))   0)
+            (equal? (Sin (Times  4 'Pi))   0)
+            (equal? (Sin (Times -2 'Pi))   0)
+
+            (equal? (Sin (Divide 'Pi 2))                      1)
+            (equal? (Sin (Times 1/2 'Pi))                     1)
+            (equal? (Sin (Times 5/2 'Pi))                     1)
+            (equal? (Sin (Plus (Divide 'Pi 2) (Times 2 'Pi))) 1)
+            
+            (equal? (Sin (Times 3/2 'Pi))                       -1)
+            (equal? (Sin (Times 7/2 'Pi))                       -1)
+            (equal? (Sin (Plus (Times 3/2 'Pi) (Times 2 'Pi)))  -1)
+
+            (equal? (Sin (Times 1/3 'Pi))  (Divide (Sqrt 3) 2))
+            (equal? (Sin (Times 1/4 'Pi))  (Divide 1 (Sqrt 2)))
+            
+            (equal? (Sin (Minus 'u))  (Minus (Sin 'u))))
+      "Cos"
+      (list (equal? (Cos 2.)               (flcos 2.))
+            (equal? (Cos 0)                1)
+            (equal? (Cos 'Pi)             -1)
+            (equal? (Cos (Times  2 'Pi))   1)
+            (equal? (Cos (Times  4 'Pi))   1)
+            (equal? (Cos (Times -2 'Pi))   1)
+
+            (equal? (Cos (Divide 'Pi 2))                      0)
+            (equal? (Cos (Times 1/2 'Pi))                     0)
+            (equal? (Cos (Times 5/2 'Pi))                     0)
+            (equal? (Cos (Plus (Divide 'Pi 2) (Times 2 'Pi))) 0)
+            
+            (equal? (Cos (Times 3/2 'Pi))                       0)
+            (equal? (Cos (Times 7/2 'Pi))                       0)
+            (equal? (Cos (Plus (Times 3/2 'Pi) (Times 2 'Pi)))  0)
+
+            (equal? (Cos (Times 1/3 'Pi))                       1/2)
+            (equal? (Cos (Times 1/4 'Pi))                       (Divide 1 (Sqrt 2)))
+            
+            (equal? (Cos (Minus 'u))                            (Cos 'u)))
       "Natural Logarithm"
       (and  (equal? (Log 1)  0)
             (equal? (Log 1.) 0.)            
