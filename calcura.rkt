@@ -351,7 +351,12 @@
 (define (inexact-real x)      (and (number? x) (inexact? x) (real? x)))
 (define (negative-real? x)    (and (real?   x) (negative? x)))
 (define (positive-real? x)    (and (real?   x) (positive? x)))
-  
+
+(define (negative-rational? x) (and (rational? x) (negative? x)))
+(define (positive-rational? x) (and (rational? x) (positive? x)))
+
+
+
 
 (define (numeric? x)
   ; explicit numbers or mathematical constants
@@ -381,6 +386,8 @@
                          [negative-integer:  negative-integer?]
                          [positive-real:     positive-real?]
                          [negative-real:     negative-real?]
+                         [positive-rational: positive-rational?]
+                         [negative-rational: negative-rational?]
 
                          [odd:               (λ (x) (and (exact-integer? x) (odd?  x)))]
                          [even:              (λ (x) (and (exact-integer? x) (even? x)))]
@@ -1927,6 +1934,15 @@
 (define (normalize-pi-coeff c)
   (- (clamp-0-2 (+ c 1)) 1))
 
+(define-command ArcSin #:attributes '(Listable NumericFunction Protected)
+  (λ (form) form))
+
+(define-command ArcCos #:attributes '(Listable NumericFunction Protected)
+  (λ (form) form))
+
+(define-command ArcTan #:attributes '(Listable NumericFunction Protected)
+  (λ (form) form))
+
 
 (define-command Cos #:attributes '(Listable NumericFunction Protected)
   (let ()
@@ -1942,19 +1958,20 @@
            [(flonum: r)                                (flcos r)]           
            [0                                           1]
            ['Pi                                        -1]
+           [(negative-rational: α)                     (Cos (- α))]
            [(form: (ktimes: (integer: k) 'Pi))         (if (even? k) 1 -1)]
            ; Cos is even
-           [(form: (Times (negative-real: α) u))       (Cos (Times (- α) u))]
+           [(form: (Times (negative-real:     α) u))   (Cos (Times (- α) u))]
+           
            ; Cos[β/2 Pi] 
            [(form: (Times α 'Pi))
             #:when (integer? (* 2 α))                  (cos-pi/2* (* 2 α))]
            ; Cos is periodic:
            ;   cos(u+2pi) = cos(u)   and  cos(u+pi) = - cos(u)
            [(form: (Plus u ... (ktimes: (integer: k) 'Pi) v ...))
-            #:when (not (= k 1)) ; already reduced when k=1
             (if (even? k)
-                (Cos (Form 'Plus (append u v)))
-                (Times -1 (Cos (Form 'Plus (append u v)))))]
+                (Cos (apply Plus (append u v)))
+                (Times -1 (Cos (apply Plus (append u v)))))]
            ; Normalize coefficient
            [(form: (Times (and α (rational: _ _)) 'Pi))
             #:when (or (< α -1/2) (> α 1/2))
@@ -1971,6 +1988,8 @@
             ; Note: we ignore the possibility that u is outside [-1;1].
             u]
            [(form: (ArcSin u))      (Sqrt (Minus 1 (Power u 2)))]
+           [(form: (ArcTan u))      (Power (Power (Plus 1 (Power u 2)) 1/2) -1)]
+           
            [(form: (Times 1/3 'Pi)) 1/2]
 
            [else form])]
@@ -2470,6 +2489,7 @@
       (list (equal? (Cos 2.)               (flcos 2.))
             (equal? (Cos 0)                1)
             (equal? (Cos 'Pi)             -1)
+            (equal? (Cos -3)               (Cos 3))
             (equal? (Cos (Times  2 'Pi))   1)
             (equal? (Cos (Times  4 'Pi))   1)
             (equal? (Cos (Times -2 'Pi))   1)
@@ -2486,7 +2506,21 @@
             (equal? (Cos (Times 1/3 'Pi))                       1/2)
             (equal? (Cos (Times 1/4 'Pi))                       (Divide 1 (Sqrt 2)))
             
-            (equal? (Cos (Minus 'u))                            (Cos 'u)))
+            (equal? (Cos (Minus 'u))                            (Cos 'u))
+            (equal? (for/list ([n 8]) (Cos (Times n 1/2 'Pi)))  '(1 0 -1 0 1 0 -1 0))
+            (equal? (Cos (Plus 'x (Times  2 'Pi)))               (Cos 'x))
+            (equal? (Cos (Plus 'x (Times  4 'Pi)))               (Cos 'x))
+            (equal? (Cos (Plus 'x (Times -4 'Pi)))               (Cos 'x))
+            (equal? (Cos (Plus 'x 'Pi))                          (Minus (Cos 'x)))
+            ;; (check-equal? (Cos (⊕ x (⊗ 2 @n @pi))) (Cos x)) ; todo: 'n natural
+            ;; (check-equal? (Cos (⊕ x (⊗ 4 @n @pi))) (Cos x))
+            ;; (check-equal? (Cos (⊕ x (⊗ 2 @p @pi))) (Cos x))
+            (equal? (Cos (Times 4/3 'Pi))                        -1/2)
+            (equal? (Cos (ArcCos 'x))                            'x)
+            (equal? (Cos (ArcSin 'x))                             (Sqrt (Minus 1 (Power 'x 2))))
+            (equal? (Cos (ArcTan 'x))                             (Power (Power (Plus 1 (Power 'x 2)) 1/2) -1))
+            ; (equal? (Cos @i) (Cosh 1)) ; TODO: complex
+            )
       "Natural Logarithm"
       (and  (equal? (Log 1)  0)
             (equal? (Log 1.) 0.)            
