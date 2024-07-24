@@ -2016,16 +2016,16 @@
            [(form: (Times (integer: _) 'Pi))     0]
            ; Sin is odd
            [(form: (Times (negative-real: α) u))       (Times -1 (Sin (Times (- α) u)))]
+           [(negative-rational: α)                     (Minus (Sin (- α)))]
            ; Sin[β/2 Pi] = ±1
            [(form: (Times α 'Pi))
             #:when (integer? (* 2 α))                  (if (= (remainder (* 2 α) 4) 1) 1 -1)]
            ; Sin is periodic:
            ;   sin(u+2pi) = sin(u)   and  sin(u+pi)=-sin(u)
            [(form: (Plus u ... (ktimes: (integer: k) 'Pi) v ...))
-            #:when (not (= k 1)) ; already reduced when k=1
             (if (even? k)
-                (Sin (Form 'Plus (append u v)))
-                (Sin (Form 'Plus (cons 'Pi (append u v)))))]
+                (Sin (apply Plus (append u v)))
+                (Minus (Sin (apply Plus (append u v)))))]
            ; Normalize coefficient
            [(form: (Times (and α (rational: _ _)) 'Pi))
             #:when (or (< α -1/2) (> α 1/2))
@@ -2045,6 +2045,7 @@
             ; Note: we ignore the possibility that u is outside [-1;1].
             u]
            [(form: (ArcCos u))      (Sqrt (Minus 1 (Power u 2)))]
+           [(form: (ArcTan u))      (Times u (Power (Sqrt (Plus 1 (Power u 2))) -1))]
            [(form: (Times 1/3 'Pi)) (Divide (Sqrt 3) 2)]
 
            [else form])]
@@ -2465,7 +2466,7 @@
       (and  (equal? (Sqrt 3.) (flsqrt 3.))
             (equal? (FullForm (Sqrt 3)) '(Power 3 1/2)))
       "Sin"
-      (list (equal? (Sin 2.)               (flsin 2.))
+      (and  (equal? (Sin 2.)               (flsin 2.))
             (equal? (Sin 0)                0)
             (equal? (Sin 'Pi)              0)
             (equal? (Sin (Times  2 'Pi))   0)
@@ -2484,9 +2485,26 @@
             (equal? (Sin (Times 1/3 'Pi))  (Divide (Sqrt 3) 2))
             (equal? (Sin (Times 1/4 'Pi))  (Divide 1 (Sqrt 2)))
             
-            (equal? (Sin (Minus 'u))  (Minus (Sin 'u))))
+            (equal? (Sin (Minus 'u))  (Minus (Sin 'u)))
+
+            (equal? (for/list ([n 8]) (Sin (Times n 1/2 'Pi))) '(0 1 0 -1 0 1 0 -1))
+            (equal? (Sin (Plus 'x (Times  2 'Pi)))         (Sin 'x))
+            (equal? (Sin (Plus 'x (Times  4 'Pi)))         (Sin 'x))
+            (equal? (Sin (Plus 'x (Times -4 'Pi)))         (Sin 'x))
+            (equal? (Sin (Plus 'x           'Pi))   (Minus (Sin 'x)))
+            (equal? (Sin (Plus 'x (Times  3 'Pi)))  (Minus (Sin 'x)))            
+            ;; (check-equal? (Sin (⊕ x (⊗ 2 @n @pi)))    (Sin x))
+            ;; (check-equal? (Sin (⊕ x (⊗ 4 @n @pi)))    (Sin x))
+            ;; (check-equal? (Sin (⊕ x (⊗ 2 @p @pi)))    (Sin x))            
+            (equal? (Sin (Times 2/3 'Pi)) (Times 1/2 (Power 3 1/2)))
+            (equal? (Sin -3)              (Minus (Sin 3)))
+            (equal? (Sin (ArcSin  'x))    'x)
+            (equal? (Sin (ArcCos  'x))    (Sqrt (Minus 1 (Power 'x 2))))
+            (equal? (Sin (ArcTan  'x))    (Times 'x (Power (Sqrt (Plus 1 (Power 'x 2))) -1)))
+            ; (equal? (Sin 'I)              (Times 'I (Sinh 1))) 
+            )
       "Cos"
-      (list (equal? (Cos 2.)               (flcos 2.))
+      (and  (equal? (Cos 2.)               (flcos 2.))
             (equal? (Cos 0)                1)
             (equal? (Cos 'Pi)             -1)
             (equal? (Cos -3)               (Cos 3))
