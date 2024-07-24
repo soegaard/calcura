@@ -343,8 +343,8 @@
 (define (exact-zero? x)       (and (number? x) (exact? x) (zero? x)))
 (define (exact-one? x)        (and (number? x) (exact? x) (= x 1)))
 
-(define (positive-integer? x) (and (number? x) (exact? x) (> x 0)))
-(define (negative-integer? x) (and (number? x) (exact? x) (< x 0)))
+(define (positive-integer? x) (and (number? x) (exact? x) (integer? x) (positive? x)))
+(define (negative-integer? x) (and (number? x) (exact? x) (integer? x) (negative? x)))
 
 (define (exact-rational? x)   (and (number? x) (exact? x) (real? x)))
 
@@ -1531,41 +1531,71 @@
     [else orig-form]))
 
 
+
 ; Power[x,y]
 ;   TODO - WIP
 (define-command Power #:attributes '(Listable NumericFunction OneIdentity Protected)
-  (λ (form)
-    ; (displayln (FullForm form))
-    (match-parts form
-      ; Power[x,y] = ...
-      [(x y) (cond
-               ; fast path
-               [(and (inexact-real x) (inexact-real y)) (expt x y)]
-               [(and (rational? x) (equal? y -1))       (/ 1 x)]
-               ; x¹ = x 
-               [(equal? y 1)                            x]
-               ; x⁰ = 1
-               [(equal? y 0)                            1]
-               ; 1^x = 1
-               [(equal? x 1)                            1]
-               [(equal? y 1/2)                          (if (and (rational? x) (= (numerator x) 1))
-                                                            (Power (Power (denominator x) 1/2) -1)
-                                                            form)]
-               ; (ab)^c = a^c b^c  only if c<>0 is an integer
-               [(and (has-head? x 'Times) (integer? y)) (define factors (for/parts ([x (in-elements x)])
-                                                                          (Power x y)))
-                                                        (MakeForm 'Times factors)]
-               ; (a^b)^c = a^(bc) only if c is an integer
-               [(and (and (has-head? x 'Power) (= (form-length x) 2))
-                     (integer? y))                
-                (define a (form-ref x 1))
-                (define b (form-ref x 2))
-                (Power a (Times b y))]
-               
-               ; default
-               [else form])]
-      ; 0, 1, 3 or more arguments
-      [else form])))
+  (let ()
+    (define (sqrt-natural form n)
+      ; suppose n = s^2 * f , where f is square-free
+      ; sqrt(n) = s * sqrt(f)
+      (match n
+        [0 0]
+        [1 1]
+        [_ (define-values (ss ns)
+             (for/fold ([squares '()] [non-squares '()])
+                       ([b^e (in-list (factorize n))])
+               (define-values (b e) (values (first b^e) (second b^e)))
+               (if (even? e)
+                   (values (cons (expt b (/    e    2)) squares)         non-squares)
+                   (values (cons (expt b (/ (- e 1) 2)) squares) (cons b non-squares)))))
+           (if (equal? ss '(1))
+               form
+               (Times (for/product ([s (in-list ss)]) s)
+                      (match (for/product ([n (in-list ns)]) n) 
+                        [1 1]
+                        [p (Form 'Power (list p 1/2))])))]))
+    
+    (λ (form)
+      ; (displayln (FullForm form))
+      (match-parts form
+        ; Power[x,y] = ...
+        [(x y) (cond
+                 ; fast path
+                 [(and (inexact-real? x) (inexact-real? y))  (expt x y)]
+                 ; x¹ = x 
+                 [(equal? y 1)   x]
+                 ; x⁰ = 1
+                 [(equal? y 0)   1]
+                 ; 1^x = 1
+                 [(equal? x 1)   1]
+                 ; 
+                 [(and (integer? x) (integer? y))           (expt x y)]
+
+                 ; x^(1/2) = sqrt(x)
+                 [(and (positive-integer? x) (equal? y 1/2)) (sqrt-natural form x)]
+
+                 [(equal? y 1/2) (if (and (rational? x) (= (numerator x) 1))
+                                     (Power (Power (denominator x) 1/2) -1)
+                                     form)]
+                 ; x^-1                 
+                 [(and (rational? x) (equal? y -1))          (/ 1 x)]
+
+                 ; (ab)^c = a^c b^c  only if c<>0 is an integer
+                 [(and (has-head? x 'Times) (integer? y)) (define factors (for/parts ([x (in-elements x)])
+                                                                            (Power x y)))
+                                                          (MakeForm 'Times factors)]
+                 ; (a^b)^c = a^(bc) only if c is an integer
+                 [(and (and (has-head? x 'Power) (= (form-length x) 2))
+                       (integer? y))                
+                  (define a (form-ref x 1))
+                  (define b (form-ref x 2))
+                  (Power a (Times b y))]
+                 
+                 ; default
+                 [else form])]
+        ; 0, 1, 3 or more arguments
+        [else form]))))
 
 
 ; Times[expr, ...]
@@ -2080,23 +2110,26 @@
   (λ (form)
     (match-parts form
       ; Log[z] natural 
-      [(1)                    0]
-      [('E)                   1]
-      [((inexact-real: r))    (log r)]
-      [(0)                    (Minus 'Infinity)]
-      [((integer: n))         (if (> n 0)
-                                  form
-                                  (Plus (Times 'I 'Pi) (Log (- n))))]
-      [((rational: p q))      (cond
-                                [(= p 1) (Minus (Log q))]
-                                [(< p 0) (Plus (Times 'I 'Pi) (Log (- (/ p q))))]
-                                [(< p q) (Minus (Log (/ q p)))]
-                                [else    form])]                                  
-      ; Mathematica requires PowerExpand for Log[Exp[z]] = z,
-      ; so there is no rule for Log[Exp[z]]=z.
-      ; Special cases for z rational is okay.     
-      [((form: (Power 'E (rational: u)))) u] 
-      
+      [(z)
+       (match z
+         [1                    0]
+         ['E                   1]
+         [(inexact-real: r)    (log r)]
+         [0                    (Minus 'Infinity)]
+         [(integer: n)         (if (> n 0)
+                                   form
+                                   (Plus (Times 'I 'Pi) (Log (- n))))]
+         [(rational: p q)      (cond
+                                 [(= p 1) (Minus (Log q))]
+                                 [(< p 0) (Plus (Times 'I 'Pi) (Log (- (/ p q))))]
+                                 [(< p q) (Minus (Log (/ q p)))]
+                                 [else    form])]                                  
+         ; Mathematica requires PowerExpand for Log[Exp[z]] = z,
+         ; so there is no rule for Log[Exp[z]]=z.
+         ; Special cases for z rational is okay.     
+         [(form: (Power 'E (rational: u))) u]
+         [else form])]
+
       ; Log[b, z] base b
       [((real: b)          (inexact-real: r))    (displayln 'here3) (fllogb (fl b) r)]
       [((inexact-real: b)  (real: r))            (fllogb b  (fl r))]
@@ -2455,6 +2488,8 @@
       "Basic Power"
       (and  (equal? (FullForm (Power 'x 0))                1)
             (equal? (FullForm (Power 1 'x))                1)
+            (equal? (Power 2 3)                            8)
+            (equal? (Power 4 1/2)                          2)
             (equal? (FullForm (Power (Times 'a 'b)    3))  '(Times (Power a 3) (Power b 3)))
             (equal? (FullForm (Power (Times 'a 'b 'c) 3))  '(Times (Power a 3) (Power b 3) (Power c 3)))
             (equal? (FullForm (Power (Times 'a 'b)    'x)) '(Power (Times a b) x))
