@@ -2131,9 +2131,11 @@
          [else form])]
 
       ; Log[b, z] base b
-      [((real: b)          (inexact-real: r))    (displayln 'here3) (fllogb (fl b) r)]
+      
+      [((real: b)          (inexact-real: r))    (fllogb (fl b) r)]
       [((inexact-real: b)  (real: r))            (fllogb b  (fl r))]
       [((integer: b)       (integer: r))         (integer-log b r)]
+      [((integer: b)       (rational: p q))      (Minus (Log b p) (Log b q))]
       [(b                  z)                    (Divide (Log z) (Log b))]
       ; otherwise
       [else form])))
@@ -2589,7 +2591,7 @@
             (equal? (FullForm (Log -2))   '(Plus (Times I Pi) (Log 2)))
             (equal? (FullForm (Log -1/2)) '(Plus (Times I Pi) (Times -1 (Log 2)))))
       "Logarithm with base"
-      (list (equal? (Log 2. 8.) 3.)
+      (and (equal? (Log 2. 8.) 3.)
            (equal? (Log 2  8.) 3.)
            (equal? (Log 2. 8)  3.)
            (equal? (Log 2  8)  3)
