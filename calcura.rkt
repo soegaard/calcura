@@ -885,6 +885,172 @@
 ;;; Patterns
 ;;;
 
+; Use `ToExpression` to test `HoldPattern`.
+; Since normal Racket evaluation ignores the `HoldAll` attribute,
+; you can't call `HoldPattern` directly.
+
+; > (FullForm (Eval (ToExpression '(HoldPattern (Plus 1 2)))))
+; '(HoldPattern (Plus 1 2))
+
+(define-command HoldPattern #:attributes '(HoldAll Protected)
+  (λ (form)
+    form))
+
+(define-command Pattern #:attributes '(HoldFirst Protected)
+  (λ (form)
+    form))
+
+
+; (compile-pattern pattern)
+;   Produces a function that given an Expression,
+;   determines whether the expression matches the pattern,
+;   and if so, returns an environment where the variables in the pattern
+;   are bound to the pieces of the expression that matched.
+;   If the match fails, the false value #f is returned.
+
+; Patterns:
+
+; _  or Blank[]      matches everything
+; _h or Blank[h]     matches forms with the head `h`
+
+; s_   equivalent to s:_  that is Pattern[s, _]
+; s_h  equivalent to s:_h that is Pattern[s, _h]
+
+
+; f[n_,n_]     f with two identical arguments
+
+(define empty-pattern-env '())
+
+(define (compile-pattern pattern)
+  (define empty-env empty-pattern-env)
+  (define (extend-env sym expr env)
+    (cons (cons sym expr) env))
+  (define (merge-envs env1 env2)
+    (append env1 env2))
+  (define (env-lookup env sym [default sym])
+    (define a (assoc sym env))
+    (cond
+      [a => cdr]
+      [else default]))
+  (define (symbol-remove-initial-underscore sym)
+    (define str (symbol->string sym))
+    (define n   (string-length str))
+    (cond
+      [(equal? str "")                 #f]
+      [(equal? str "_")                #f]
+      [(equal? (string-ref str 0) #\_) (string->symbol (substring str 1 n))]
+      [else                            #f]))
+  (define (symbol-remove-terminal-underscore sym)
+    (define str (symbol->string sym))
+    (define n   (string-length str))
+    (cond
+      [(equal? str "")                       #f]
+      [(equal? str "_")                      #f]
+      [(equal? (string-ref str (- n 1)) #\_) (string->symbol (substring str 0 (- n 1)))]
+      [else                                  #f]))
+  (define (has-initial-underscore? sym)
+    (define str (symbol->string sym))
+    (define n   (string-length str))
+    (and (> n 0) (equal? (string-ref str 0) #\_)))
+  (define (has-terminal-underscore? sym)
+    (define str (symbol->string sym))
+    (define n   (string-length str))
+    (and (> n 0) (equal? (string-ref str (- n 1)) #\_)))
+  
+  (define matcher
+    (match pattern
+      ; _ or Blank[]
+      [(or '_ (form: (Blank)))  
+       (λ (ρ expr) ρ)]
+      ; _h or Blank[h]
+      [(or (form: (Blank h))
+           (and (? symbol?) (? has-initial-underscore?)
+                (app symbol-remove-initial-underscore h)))
+       (λ (ρ expr)
+         (if (eq? (Head expr) h)
+             ρ
+             #f))]
+      ; Pattern[sym, obj]
+      ; sym_ is same as Pattern[sym, _]
+      [(or (form: (Pattern (symbol: sym) obj))
+           (and (? symbol?) (? has-terminal-underscore?)
+                (app symbol-remove-terminal-underscore sym)
+                (app (λ (_) '_)                        obj)))
+       (define match-obj (compile-pattern obj))
+       (λ (ρ expr)
+         (cond
+           [(match-obj ρ expr) => (λ (env)
+                                    (cond
+                                      ; If sym already has a binding,
+                                      ; we need to check that the values and expr
+                                      ; are identical.
+                                      [(env-lookup ρ sym #f)
+                                       => (λ (val)
+                                            (cond
+                                              [(equal? val expr) env] 
+                                              [else              #f]))]
+                                      ; If there is no existing binding,
+                                      ; we can just add a binding.
+                                      [else
+                                       (extend-env sym expr env)]))]
+           [else #f]))]
+
+      [(? symbol? sym)
+       (λ (ρ expr)
+         (if (equal? expr (env-lookup ρ sym))
+             ρ
+             #f))]
+      ; Atoms matches themselves
+      [(? atom? atom) ; note: symbols are atoms
+       (λ (ρ expr)
+         (if (equal? expr atom)
+             ρ
+             #f))]
+      [_
+       (cond
+         ; f[arg1, ...]
+         [(form? pattern)
+          (define n          (form-length pattern))
+          (define match-head (compile-pattern (form-head pattern)))
+          (define match-args (map compile-pattern (form-elements pattern)))
+          (λ (ρ expr)
+            (define l (Length expr))
+            (cond
+              [(not (= l n))
+               #f]
+              [(match-head ρ (Head expr))
+               => (λ (env)
+                    (let/ec return
+                      (for/fold ([env env]) ([e (in-elements expr)]
+                                             [m (in-list match-args)])
+                        (define r (m env e))
+                        (if r
+                            r
+                            (return #f)))))]
+              [else #f]))]
+         [else
+          (displayln "fail")
+          #f])]))
+  (or matcher
+      (λ (expr) #f)))
+
+
+; Cases[list, pattern]
+;   return list of elements in `list` that matches `pattern`
+(define-command Cases #:attributes '(HoldFirst Protected)
+  (λ (form)
+    (match-parts form
+      [(list-expr pattern)
+       (define match-pattern (compile-pattern pattern))
+       (define parts         (for/parts ([e (in-elements list-expr)]
+                                         #:when (match-pattern empty-pattern-env e))
+                               e))
+       (MakeForm 'List parts)]
+      [else
+       form])))
+       
+
+
 ;; ; _  or Blank[]   matches any expression
 ;; ; _h or Blank[h]  matches any expression with head `h`
 ;; (define-match-expander Blank
@@ -1121,7 +1287,7 @@
                        [(symbol: _)         1]
                        [(atom:   _)         0]
                        [(form: _ 'Times)    (degree-times f)]
-                       [(form: (Power _ r)) r]
+                       [(form: (Power b r)) (* (degree b) (degree r))] ; TODO
                        [else                +inf.0]))
                    (define da (degree a))
                    (define db (degree b))
@@ -1148,7 +1314,8 @@
                         [((form: (Power u a)) (form: _))            1]
                         [((form: _) (form: (Power u a)) )          -1]
                         ; Case: At least one Times expression.
-                        ; [((form: (Times u a ...)) (form: (Times u b ...))) (Order a ... b ...)]
+                        ; [((form: (Times u a ...)) (form: (Times u b ...))) (Order (apply Times a) (apply Times b))]
+                        ; TODO
                         [((form: _ 'Times) _)                      1]
                         [(_ (form: _ 'Times))                      -1]
                         [(a b)
@@ -2459,6 +2626,24 @@
             (equal? (Catenate (List (List 1 2 3) (Missing) (List 4 5 6))) (List 1 2 3 4 5 6))
             (equal? (Join (List 1 2 3) (List 4 5 6))                      (List 1 2 3 4 5 6))
             )
+      "Order"
+      (and  (equal? (Order 1 'x)   1)
+            (equal? (Order 'x 1)  -1)
+            (equal? (Order 'x 'y)  1)
+            (equal? (Order 'y 'x) -1)            
+            (equal? (Order (Times 2 'x)            (Times 2 (Power 'x 2))  )   1)
+            (equal? (Order (Times 2 (Power 'x 2))  (Times 2        'x))       -1))
+      "Pattern Matching"
+      (list (and ((compile-pattern (ToExpression '_))       '() (List 1 2 3)) #t)
+            (and ((compile-pattern (ToExpression '(Blank))) '() (List 1 2 3)) #t)            
+            (and ((compile-pattern (ToExpression '_List))   '() (List 1 2 3)) #t)
+            (not ((compile-pattern (ToExpression '_List))   '() 42))
+            (and ((compile-pattern (ToExpression '(Pattern x _)))     '() 42)           #t)            
+            (and ((compile-pattern (ToExpression '(Pattern x _List))) '() (List 1 2 3)) #t)
+            (not ((compile-pattern (ToExpression '(Pattern x _List))) '() 42))
+            (and ((compile-pattern (ToExpression 'x_))                '() 42) #t)
+            (and ((compile-pattern (ToExpression '(List x_ y_ x_))) '() (List 1 2 1)) #t)
+            (not ((compile-pattern (ToExpression '(List x_ y_ x_))) '() (List 1 2 3))))            
       "Basic Plus"
       (and  (equal? (Plus)                                 0)
             (equal? (Plus 2)                               2)
