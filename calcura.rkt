@@ -1037,15 +1037,27 @@
 
 ; Cases[list, pattern]
 ;   return list of elements in `list` that matches `pattern`
-(define-command Cases #:attributes '(HoldFirst Protected)
+(define-command Cases #:attributes '(Protected)
+  (λ (form)
+    (match-parts form
+      [(exprs pattern)
+       (match* (exprs pattern)
+         ; [((head: exprs 'List) (head: pattern 'Rules)) ...] ; TODO          
+         [((head: 'List) _)
+          (define match-pattern (compile-pattern pattern))
+          (define parts         (for/parts ([e (in-elements exprs)]
+                                            #:when (match-pattern empty-pattern-env e))
+                                  e))
+          (MakeForm 'List parts)]
+         [(_ _) form])]
+      [else
+       form])))
+
+(define-command Count #:attributes '(Protected)
   (λ (form)
     (match-parts form
       [(list-expr pattern)
-       (define match-pattern (compile-pattern pattern))
-       (define parts         (for/parts ([e (in-elements list-expr)]
-                                         #:when (match-pattern empty-pattern-env e))
-                               e))
-       (MakeForm 'List parts)]
+       (Length (Cases list-expr pattern))]
       [else
        form])))
        
