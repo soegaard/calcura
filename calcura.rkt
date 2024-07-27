@@ -900,6 +900,18 @@
   (λ (form)
     form))
 
+(define-command Blank #:attributes '(Protected)
+  (λ (form)
+    form))
+
+(define-command BlankSequence #:attributes '(Protected)
+  (λ (form)
+    form))
+
+(define-command BlankNullSequence #:attributes '(Protected)
+  (λ (form)
+    form))
+
 
 ; (compile-pattern pattern)
 ;   Produces a function that given an Expression,
@@ -916,6 +928,8 @@
 ; s_   equivalent to s:_  that is Pattern[s, _]
 ; s_h  equivalent to s:_h that is Pattern[s, _h]
 
+; __  or BlankSequence[]      matches 1 or more expressions
+; ___ or BlankNullSequence[]  matches 0 or more expressions
 
 ; f[n_,n_]     f with two identical arguments
 
@@ -969,7 +983,7 @@
        (λ (ρ expr)
          (if (eq? (Head expr) h)
              ρ
-             #f))]
+             #f))]      
       ; Pattern[sym, obj]
       ; sym_ is same as Pattern[sym, _]
       [(or (form: (Pattern (symbol: sym) obj))
@@ -1035,21 +1049,22 @@
       (λ (expr) #f)))
 
 
-; Cases[list, pattern]
-;   return list of elements in `list` that matches `pattern`
+; Cases[form, pattern]
+;   Return list of elements of `form` that matches `pattern`.
+;   Note: form is usually a list, but Cases juses ignores the head.
 (define-command Cases #:attributes '(Protected)
   (λ (form)
     (match-parts form
       [(exprs pattern)
        (match* (exprs pattern)
          ; [((head: exprs 'List) (head: pattern 'Rules)) ...] ; TODO          
-         [((head: 'List) _)
+         [((form: _) _)
           (define match-pattern (compile-pattern pattern))
           (define parts         (for/parts ([e (in-elements exprs)]
                                             #:when (match-pattern empty-pattern-env e))
                                   e))
           (MakeForm 'List parts)]
-         [(_ _) form])]
+         [(_ _) (List)])]
       [else
        form])))
 
