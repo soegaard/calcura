@@ -981,12 +981,16 @@
     (and (> n 0) (equal? (string-ref str (- n 1)) #\_)))
 
   
+  ; Atoms matches themselves
   (define (compile-atom-pattern atom)
     (λ (ρ expr ks kf)
       (if (equal? expr atom)
           (ks ρ)
           (kf))))
 
+  ; If the symbol is bound to a value in the environment ρ,
+  ; then the expression must and value be equal.
+  ; If the symbol is unbound, it matches itself.
   (define (compile-symbol-pattern symbol)
     (λ (ρ expr ks kf)
       (if (equal? expr (env-lookup ρ symbol symbol))
@@ -1045,22 +1049,40 @@
     (define n          (form-length pattern))
     (define match-head (compile (form-head pattern)))
     (define match-args (map compile (form-elements pattern)))
-    (λ (ρ expr ks kf)
-      (define l (Length expr))
-      (if (not (= l n))
-          (kf)
-          (match-head ρ (Head expr)
-                      (λ (env)
-                        (define res
-                          (let/ec return                          
-                            (for/fold ([env env]) ([e (in-elements expr)]
-                                                   [m (in-list match-args)])
-                              (define r (m env e values (λ () #f)))
-                              (if r
-                                  r
-                                  (return #f)))))
-                        (if res (ks res) (kf)))
-                      kf))))
+
+
+    (match form
+      ; head[__]  or head[BlankSequence[]]
+      ; matches 1 or more arguments
+      [(elements: (or '__ (head: 'BlankSequence)))
+       (displayln "compiling __ matcher")
+       (define match-head (compile (form-head form)))
+       (λ (ρ expr ks kf)
+         (match-head ρ (Head expr)
+                     ; success = 
+                     (λ (env)
+                       (if (and (form? expr) (> (form-length expr) 0))
+                           (ks env)
+                           (kf)))
+                     kf))]
+      [_
+       ; f[e1, ...]
+       (λ (ρ expr ks kf)
+         (define l (Length expr))
+         (if (not (= l n))
+             (kf)
+             (match-head ρ (Head expr)
+                         (λ (env)
+                           (define res
+                             (let/ec return                          
+                               (for/fold ([env env]) ([e (in-elements expr)]
+                                                      [m (in-list match-args)])
+                                 (define r (m env e values (λ () #f)))
+                                 (if r
+                                     r
+                                     (return #f)))))
+                           (if res (ks res) (kf)))
+                         kf)))]))
 
   (define (compile pattern)
     (match pattern
@@ -1069,20 +1091,21 @@
       [(or (form: (Blank)) (form: (Blank _))
            '_  (and (? symbol?) (? has-initial-underscore?)))
        (compile-blank-pattern pattern)]
+
       ; __ or BlankSequence[]      
-      ; [(or '__  (form: (BlankSequence)))
-      ;  (compile-black-sequence-pattern pattern)]
+      [(or '__  (form: (BlankSequence)))
+       ; At toplevel a blank sequence is the same as a blank
+      (compile-blank-pattern (Blank))]
 
       [(or (form: (Pattern (symbol: sym) obj))
            (and (? symbol?) (? has-terminal-underscore?)
                 (app symbol-remove-terminal-underscore sym)
                 (app (λ (_) '_)                        obj)))
        (compile-pattern-pattern pattern)]
-
       
       [(? symbol?)
        (compile-symbol-pattern pattern)]
-      ; Atoms matches themselves
+
       [(? atom?) ; note: symbols are atoms
        (compile-atom-pattern pattern)]
 
@@ -1093,9 +1116,9 @@
        pattern]))
 
   (define matcher (compile pattern))
+  (define always-false (λ () #f))
   (λ (expr)
-    (define ρ empty-env)
-    (matcher ρ expr values (λ () #f))))
+    (matcher empty-env expr values always-false)))
     
 
   
