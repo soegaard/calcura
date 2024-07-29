@@ -904,6 +904,10 @@
   (λ (form)
     form))
 
+;; In[139]:= g[x__] := x                                                                    
+;; In[140]:= g[1,2,3]                                                                       
+;; Out[140]= Sequence[1, 2, 3]
+
 (define-command BlankSequence #:attributes '(Protected)
   (λ (form)
     form))
@@ -931,12 +935,192 @@
 ; __  or BlankSequence[]      matches 1 or more expressions
 ; ___ or BlankNullSequence[]  matches 0 or more expressions
 
+; x__ or Blank
+
+; pattern..   or  Repeated[pattern]       matches 1 or more expressions all matching `pattern`
+; pattern...  or  RepeatedNull[pattern]   matches 0 or more expressions all matching `pattern`
+
 ; f[n_,n_]     f with two identical arguments
 
-(define empty-pattern-env '())
+(define empty-match-env '())
 
 (define (compile-pattern pattern)
-  (define empty-env empty-pattern-env)
+  (define empty-env empty-match-env) 
+  (define (extend-env sym expr env)
+    (cons (cons sym expr) env))
+  (define (merge-envs env1 env2)
+    (append env1 env2))
+  (define (env-lookup env sym [default sym])
+    (define a (assoc sym env))
+    (cond
+      [a => cdr]
+      [else default]))
+  (define (symbol-remove-initial-underscore sym)
+    (define str (symbol->string sym))
+    (define n   (string-length str))
+    (cond
+      [(equal? str "")                 #f]
+      [(equal? str "_")                #f]
+      [(equal? (string-ref str 0) #\_) (string->symbol (substring str 1 n))]
+      [else                            #f]))
+  (define (symbol-remove-terminal-underscore sym)
+    (define str (symbol->string sym))
+    (define n   (string-length str))
+    (cond
+      [(equal? str "")                       #f]
+      [(equal? str "_")                      #f]
+      [(equal? (string-ref str (- n 1)) #\_) (string->symbol (substring str 0 (- n 1)))]
+      [else                                  #f]))
+  (define (has-initial-underscore? sym)
+    (define str (symbol->string sym))
+    (define n   (string-length str))
+    (and (> n 0) (equal? (string-ref str 0) #\_)))
+  (define (has-terminal-underscore? sym)
+    (define str (symbol->string sym))
+    (define n   (string-length str))
+    (and (> n 0) (equal? (string-ref str (- n 1)) #\_)))
+
+  
+  (define (compile-atom-pattern atom)
+    (λ (ρ expr ks kf)
+      (if (equal? expr atom)
+          (ks ρ)
+          (kf))))
+
+  (define (compile-symbol-pattern symbol)
+    (λ (ρ expr ks kf)
+      (if (equal? expr (env-lookup ρ symbol symbol))
+          (ks ρ)
+          (kf))))
+
+  (define (compile-blank-pattern blank-form)
+    (match blank-form
+      ; _ or Blank[]      
+      [(or '_  (form: (Blank)))
+       (λ (ρ expr ks kf)
+         (ks ρ))]
+
+      ; _h or Blank[h]
+      [(or (form: (Blank h))
+           (and (? symbol?) (? has-initial-underscore?)
+                (app symbol-remove-initial-underscore h)))
+       (λ (ρ expr ks kf)
+         (if (eq? (Head expr) h)
+             (ks ρ)
+             (kf)))]))
+
+  (define (compile-pattern-pattern pattern-form)
+    ; Pattern[sym, obj]
+    ;   sym:obj is the same as Pattern[sym, obj]
+    ;   sym_    is the same as Pattern[sym, _]
+    (match pattern-form
+      [(or (form: (Pattern (symbol: sym) obj))
+           (and (? symbol?) (? has-terminal-underscore?)
+                (app symbol-remove-terminal-underscore sym)
+                (app (λ (_) '_)                        obj)))
+       (define match-obj (compile obj))
+       (λ (ρ expr ks kf)
+         (cond
+           [(match-obj ρ expr
+                       ; succes = 
+                       (λ (env)
+                         (cond
+                           ; If sym already has a binding, we need to check 
+                           ; that the values and `expr` are identical.
+                           [(env-lookup ρ sym #f)
+                            => (λ (val)
+                                 (cond
+                                   [(equal? val expr) (ks env)]
+                                   [else              (kf)]))]
+                           ; If there is no existing binding,
+                           ; we can just add a binding.
+                           [else
+                            (ks (extend-env sym expr env))]))
+                       ; fiasco = 
+                       kf)]
+           [else (kf)]))]
+      [_ (error 'compile-pattern-pattern "internal error")]))
+
+  (define (compile-form-pattern form)
+    (define n          (form-length pattern))
+    (define match-head (compile (form-head pattern)))
+    (define match-args (map compile (form-elements pattern)))
+    (λ (ρ expr ks kf)
+      (define l (Length expr))
+      (if (not (= l n))
+          (kf)
+          (match-head ρ (Head expr)
+                      (λ (env)
+                        (define res
+                          (let/ec return                          
+                            (for/fold ([env env]) ([e (in-elements expr)]
+                                                   [m (in-list match-args)])
+                              (define r (m env e values (λ () #f)))
+                              (if r
+                                  r
+                                  (return #f)))))
+                        (if res (ks res) (kf)))
+                      kf))))
+
+  (define (compile pattern)
+    (match pattern
+      ; _ or Blank[]      
+      ; _h or Blank[h]
+      [(or (form: (Blank)) (form: (Blank _))
+           '_  (and (? symbol?) (? has-initial-underscore?)))
+       (compile-blank-pattern pattern)]
+      ; __ or BlankSequence[]      
+      ; [(or '__  (form: (BlankSequence)))
+      ;  (compile-black-sequence-pattern pattern)]
+
+      [(or (form: (Pattern (symbol: sym) obj))
+           (and (? symbol?) (? has-terminal-underscore?)
+                (app symbol-remove-terminal-underscore sym)
+                (app (λ (_) '_)                        obj)))
+       (compile-pattern-pattern pattern)]
+
+      
+      [(? symbol?)
+       (compile-symbol-pattern pattern)]
+      ; Atoms matches themselves
+      [(? atom?) ; note: symbols are atoms
+       (compile-atom-pattern pattern)]
+
+      [(? form?)
+       (compile-form-pattern pattern)]
+
+      [_
+       pattern]))
+
+  (define matcher (compile pattern))
+  (λ (expr)
+    (define ρ empty-env)
+    (matcher ρ expr values (λ () #f))))
+    
+
+  
+
+;; (define (compile-patterns patterns)
+;;   (define n (length patterns))
+;;   (case n
+;;     [(0)  (λ (ρ exprs)
+;;             (if (empty? exprs)
+;;                 ρ
+;;                 #f))]
+;;     [(1)  (define pat0       (first patterns))
+;;           (define match-pat0 (compile-pattern pat0))
+;;           (λ (ρ exprs)
+;;             (match exprs
+;;               ['()       (pattern-accepts-empty? pat0)]
+;;               [(list e0) (match-pat0 e0)]
+;;               [(list 
+;;             (cond
+;;               [(empty? exprs) ]
+;;               [(empty? (rest exprs)) 
+                                  
+
+#;(define (compile-pattern pattern)
+  (define empty-env empty-pattern-env) 
   (define (extend-env sym expr env)
     (cons (cons sym expr) env))
   (define (merge-envs env1 env2)
@@ -973,8 +1157,11 @@
   
   (define matcher
     (match pattern
-      ; _ or Blank[]
-      [(or '_ (form: (Blank)))  
+      ; _ or Blank[]      
+      [(or '_  (form: (Blank)))
+       (λ (ρ expr) ρ)]
+      ; __ or BlankSequence[]      
+      [(or '__  (form: (BlankSequence)))
        (λ (ρ expr) ρ)]
       ; _h or Blank[h]
       [(or (form: (Blank h))
@@ -983,7 +1170,7 @@
        (λ (ρ expr)
          (if (eq? (Head expr) h)
              ρ
-             #f))]      
+             #f))]
       ; Pattern[sym, obj]
       ; sym_ is same as Pattern[sym, _]
       [(or (form: (Pattern (symbol: sym) obj))
@@ -1020,28 +1207,44 @@
          (if (equal? expr atom)
              ρ
              #f))]
-      [_
+      [_       
        (cond
          ; f[arg1, ...]
          [(form? pattern)
-          (define n          (form-length pattern))
-          (define match-head (compile-pattern (form-head pattern)))
-          (define match-args (map compile-pattern (form-elements pattern)))
-          (λ (ρ expr)
-            (define l (Length expr))
-            (cond
-              [(not (= l n))
-               #f]
-              [(match-head ρ (Head expr))
-               => (λ (env)
-                    (let/ec return
-                      (for/fold ([env env]) ([e (in-elements expr)]
-                                             [m (in-list match-args)])
-                        (define r (m env e))
-                        (if r
-                            r
-                            (return #f)))))]
-              [else #f]))]
+          (match pattern
+            ; f[__]  or f[BlankSequence[]]
+            ; matches 1 or more arguments
+            [(elements: (or '__ (head: 'BlankSequence)))
+             (displayln "compiling __ matcher")
+             (define match-head (compile-pattern (form-head pattern)))
+             (λ (ρ expr)
+               (cond
+                 [(match-head ρ (Head expr))
+                  => (λ (env)
+                       (if (and (form? expr) (> (form-length expr) 0))
+                           env
+                           #f))]
+                 [else #f]))]
+            [_
+             (displayln "compiling form matcher")
+             (define n          (form-length pattern))
+             (define match-head (compile-pattern (form-head pattern)))
+             (define match-args (map compile-pattern (form-elements pattern)))
+             (λ (ρ expr)
+               (define l (Length expr))
+               (cond
+                 [(not (= l n))
+                  #f]
+                 [(match-head ρ (Head expr))
+                  => (λ (env)
+                       (let/ec return
+                         (for/fold ([env env]) ([e (in-elements expr)]
+                                                [m (in-list match-args)])
+                           (define r (m env e))
+                           (if r
+                               r
+                               (return #f)))))]
+                 [else #f]))])]
          [else
           (displayln "fail")
           #f])]))
@@ -1061,7 +1264,7 @@
          [((form: _) _)
           (define match-pattern (compile-pattern pattern))
           (define parts         (for/parts ([e (in-elements exprs)]
-                                            #:when (match-pattern empty-pattern-env e))
+                                            #:when (match-pattern empty-match-env e))
                                   e))
           (MakeForm 'List parts)]
          [(_ _) (List)])]
@@ -2661,16 +2864,21 @@
             (equal? (Order (Times 2 'x)            (Times 2 (Power 'x 2))  )   1)
             (equal? (Order (Times 2 (Power 'x 2))  (Times 2        'x))       -1))
       "Pattern Matching"
-      (list (and ((compile-pattern (ToExpression '_))       '() (List 1 2 3)) #t)
-            (and ((compile-pattern (ToExpression '(Blank))) '() (List 1 2 3)) #t)            
-            (and ((compile-pattern (ToExpression '_List))   '() (List 1 2 3)) #t)
-            (not ((compile-pattern (ToExpression '_List))   '() 42))
-            (and ((compile-pattern (ToExpression '(Pattern x _)))     '() 42)           #t)            
-            (and ((compile-pattern (ToExpression '(Pattern x _List))) '() (List 1 2 3)) #t)
-            (not ((compile-pattern (ToExpression '(Pattern x _List))) '() 42))
-            (and ((compile-pattern (ToExpression 'x_))                '() 42) #t)
-            (and ((compile-pattern (ToExpression '(List x_ y_ x_))) '() (List 1 2 1)) #t)
-            (not ((compile-pattern (ToExpression '(List x_ y_ x_))) '() (List 1 2 3))))            
+      (list (and ((compile-pattern (ToExpression '_))       (List 1 2 3)) #t)
+            (and ((compile-pattern (ToExpression '(Blank))) (List 1 2 3)) #t)            
+            (and ((compile-pattern (ToExpression '_List))   (List 1 2 3)) #t)
+            (not ((compile-pattern (ToExpression '_List))   42))
+            (and ((compile-pattern (ToExpression '(Pattern x _)))     42)           #t)            
+            (and ((compile-pattern (ToExpression '(Pattern x _List))) (List 1 2 3)) #t)
+            (not ((compile-pattern (ToExpression '(Pattern x _List))) 42))
+            (and ((compile-pattern (ToExpression 'x_))                42) #t)
+            (and ((compile-pattern (ToExpression '(List x_ y_ x_))) (List 1 2 1)) #t)
+            (not ((compile-pattern (ToExpression '(List x_ y_ x_))) (List 1 2 3)))
+            (not ((compile-pattern (Form 'Bar '(1 2 3))) (Form 'Foo '(1 2 3))))
+            (and ((compile-pattern (Form 'Foo '(1 2 3))) (Form 'Foo '(1 2 3))) #t)
+            (not ((compile-pattern (Form 'Bar '(__))) (Form 'Foo '(1 2 3))))
+            (and ((compile-pattern (Form 'Foo '(__))) (Form 'Foo '(1 2 3))) #t)
+            (not ((compile-pattern (Form 'Foo '(__))) (Form 'Foo '()))))
       "Basic Plus"
       (and  (equal? (Plus)                                 0)
             (equal? (Plus 2)                               2)
