@@ -1061,7 +1061,15 @@
          (if (= i (+ n 1))
              (ks ρ (+ i 1))
              (kf)))]
-      
+
+      [(list (or '__ (form: (BlankSequence))))
+       (λ (ρ exprs i ks kf)
+         (define j (form-length exprs))
+         (ks ρ j))]
+
+      ; This clause assumes that the pattern `pat` only matches one expression.
+      ; All patterns that match a variable number of expressions such
+      ; as BlankSequence, BlankNullSequence and Repeated needs to be handled above.
       [(list pat)
        (define matcher (compile pat))
        (λ (ρ exprs i ks kf) 
@@ -2954,9 +2962,9 @@
             (not ((compile-pattern (ToExpression '(List x_ y_ x_))) (List 1 2 3)))
             (not ((compile-pattern (Form 'Bar '(1 2 3))) (Form 'Foo '(1 2 3))))
             (and ((compile-pattern (Form 'Foo '(1 2 3))) (Form 'Foo '(1 2 3))) #t)
-            ;; (not ((compile-pattern (Form 'Bar '(__))) (Form 'Foo '(1 2 3))))
-            ;; (and ((compile-pattern (Form 'Foo '(__))) (Form 'Foo '(1 2 3))) #t)
-            ;; (not ((compile-pattern (Form 'Foo '(__))) (Form 'Foo '())))
+            (not ((compile-pattern (Form 'Bar '(__))) (Form 'Foo '(1 2 3))))
+            (and ((compile-pattern (Form 'Foo '(__))) (Form 'Foo '(1 2 3))) #t)
+            (not ((compile-pattern (Form 'Foo '(__))) (Form 'Foo '())))
             )
       "Basic Plus"
       (and  (equal? (Plus)                                 0)
