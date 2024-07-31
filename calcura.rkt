@@ -1062,10 +1062,19 @@
              (ks ρ (+ i 1))
              (kf)))]
 
-      [(list (or '__ (form: (BlankSequence))))
+      ; Match 0 or more expressions
+      [(list (or '___ (form: (BlankNullSequence))))
        (λ (ρ exprs i ks kf)
          (define j (form-length exprs))
          (ks ρ j))]
+
+      ; Match 1 or more expressions
+      [(list (or '__ (form: (BlankSequence))))
+       (λ (ρ exprs i ks kf)
+         (define j (form-length exprs))
+         (if (> i j)
+             (kf)
+             (ks ρ j)))]
 
       ; This clause assumes that the pattern `pat` only matches one expression.
       ; All patterns that match a variable number of expressions such
@@ -1088,13 +1097,31 @@
                      kf)]
            [else (kf)]))]
 
+      ; We attempt to match 0, 1, 2, ... expressions followed by pats ...
+      [(list (and pat_i (or '___ (form: (BlankNullSequence))))
+             pats ...)
+       ; todo: Match the pattern bar[1, ___] vs the expression bar[1].
+       (define matchers (compile-elements-patterns (rest patterns)))
+       (λ (ρ exprs i ks kf)
+         (define n (form-length exprs))
+         (define (backtrack i)           
+           (if (> i n)
+               (ks ρ)   ; todo: (kf) or (ks ρ)
+               (matchers ρ exprs i
+                         ks
+                         (λ () (backtrack (+ i 1))))))
+         (backtrack i))]
+      
+      ; This clause assumes that the pattern `pat_i` only matches one expression.
+      ; All patterns that match a variable number of expressions such
+      ; as BlankSequence, BlankNullSequence and Repeated needs to be handled above.
       [(list pat_i pats ...)
        (define match_i  (compile pat_i))
        (define matchers (compile-elements-patterns (rest patterns)))
        (λ (ρ exprs i ks kf)
          (define n (form-length exprs))
          (cond
-           [(< i n)
+           [(<= i n)
             (define ei (form-ref exprs i))
             (match_i ρ ei
                      ; succes =
@@ -2962,10 +2989,18 @@
             (not ((compile-pattern (ToExpression '(List x_ y_ x_))) (List 1 2 3)))
             (not ((compile-pattern (Form 'Bar '(1 2 3))) (Form 'Foo '(1 2 3))))
             (and ((compile-pattern (Form 'Foo '(1 2 3))) (Form 'Foo '(1 2 3))) #t)
-            (not ((compile-pattern (Form 'Bar '(__))) (Form 'Foo '(1 2 3))))
-            (and ((compile-pattern (Form 'Foo '(__))) (Form 'Foo '(1 2 3))) #t)
-            (not ((compile-pattern (Form 'Foo '(__))) (Form 'Foo '())))
-            )
+            ; __ or BlankSequence[] matches 1 or more expressions
+            (not ((compile-pattern (Form 'Bar '(__)))  (Form 'Foo '(1 2 3))))
+            (and ((compile-pattern (Form 'Foo '(__)))  (Form 'Foo '(1 2 3))) #t)
+            (not ((compile-pattern (Form 'Foo '(__)))  (Form 'Foo '())))
+            (and ((compile-pattern (Form 'Bar '(__ 1 __))) (Form 'Bar '(3 4 1 5 6))) #t)
+            (not ((compile-pattern (Form 'Bar '(__ 1 __))) (Form 'Bar '(3 4 1))))
+            ; ___ or BlankNullSequence[] matches 0 or more expressions
+            (not ((compile-pattern (Form 'Bar '(___))) (Form 'Foo '(1 2 3))))
+            (and ((compile-pattern (Form 'Foo '(___))) (Form 'Foo '(1 2 3))) #t)
+            (and ((compile-pattern (Form 'Foo '(___))) (Form 'Foo '())) #t)
+            (and ((compile-pattern (Form 'Bar '(1 ___))) (Form 'Bar '(1 ))) #t))
+            
       "Basic Plus"
       (and  (equal? (Plus)                                 0)
             (equal? (Plus 2)                               2)
