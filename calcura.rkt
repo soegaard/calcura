@@ -1100,18 +1100,31 @@
       ; We attempt to match 0, 1, 2, ... expressions followed by pats ...
       [(list (and pat_i (or '___ (form: (BlankNullSequence))))
              pats ...)
-       ; todo: Match the pattern bar[1, ___] vs the expression bar[1].
        (define matchers (compile-elements-patterns (rest patterns)))
        (λ (ρ exprs i ks kf)
          (define n (form-length exprs))
          (define (backtrack i)           
            (if (> i n)
-               (ks ρ)   ; todo: (kf) or (ks ρ)
+               (ks ρ i)
                (matchers ρ exprs i
                          ks
                          (λ () (backtrack (+ i 1))))))
          (backtrack i))]
-      
+
+      ; We attempt to match 1, 2, ... expressions followed by pats ...
+      [(list (and pat_i (or '__ (form: (BlankSequence))))
+             pats ...)
+       (define matchers (compile-elements-patterns (rest patterns)))
+       (λ (ρ exprs i ks kf)
+         (define n (form-length exprs))
+         (define (backtrack i)
+           (if (> i n)
+               (kf)
+               (matchers ρ exprs i
+                         ks
+                         (λ () (backtrack (+ i 1))))))
+         (backtrack (+ i 1)))]
+
       ; This clause assumes that the pattern `pat_i` only matches one expression.
       ; All patterns that match a variable number of expressions such
       ; as BlankSequence, BlankNullSequence and Repeated needs to be handled above.
@@ -2944,8 +2957,6 @@
   (convert expr))
 
 
-
-
 ;;;
 ;;; Tests
 ;;;
@@ -2995,6 +3006,9 @@
             (not ((compile-pattern (Form 'Foo '(__)))  (Form 'Foo '())))
             (and ((compile-pattern (Form 'Bar '(__ 1 __))) (Form 'Bar '(3 4 1 5 6))) #t)
             (not ((compile-pattern (Form 'Bar '(__ 1 __))) (Form 'Bar '(3 4 1))))
+            (not ((compile-pattern (Form 'Bar '(__ 1 2))) (Form 'Bar '(1 2))))
+            (and ((compile-pattern (Form 'Bar '(__ 1 2))) (Form 'Bar '(3 1 2)))   #t)
+            (and ((compile-pattern (Form 'Bar '(__ 1 2))) (Form 'Bar '(3 4 1 2))) #t)
             ; ___ or BlankNullSequence[] matches 0 or more expressions
             (not ((compile-pattern (Form 'Bar '(___))) (Form 'Foo '(1 2 3))))
             (and ((compile-pattern (Form 'Foo '(___))) (Form 'Foo '(1 2 3))) #t)
