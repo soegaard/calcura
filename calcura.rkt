@@ -963,6 +963,12 @@
       [(equal? str "_")                #f]
       [(equal? (string-ref str 0) #\_) (string->symbol (substring str 1 n))]
       [else                            #f]))
+  (define (symbol-remove-initial-underscores sym i) ; remove i underscores
+    (define str (symbol->string sym))
+    (define n   (string-length str))
+    (if (< i n)
+        (string->symbol (substring str i n))
+        #f))  
   (define (symbol-remove-terminal-underscore sym)
     (define str (symbol->string sym))
     (define n   (string-length str))
@@ -975,10 +981,24 @@
     (define str (symbol->string sym))
     (define n   (string-length str))
     (and (> n 0) (equal? (string-ref str 0) #\_)))
+  (define (has-initial-double-underscore? sym)
+    (cond
+      [(symbol? sym)
+       (define str (symbol->string sym))
+       (define n   (string-length str))
+       (and (> n 1)
+            (equal? (string-ref str 0) #\_)
+            (equal? (string-ref str 1) #\_))]
+      [else #f]))
   (define (has-terminal-underscore? sym)
     (define str (symbol->string sym))
     (define n   (string-length str))
     (and (> n 0) (equal? (string-ref str (- n 1)) #\_)))
+  (define (has-terminal-double-underscore? sym)
+    (define str (symbol->string sym))
+    (define n   (string-length str))
+    (and (> n 1) (and (equal? (string-ref str (- n 2)) #\_)
+                      (equal? (string-ref str (- n 1)) #\_))))
 
   
   ; Atoms matches themselves
@@ -1124,6 +1144,29 @@
                          ks
                          (λ () (backtrack (+ i 1))))))
          (backtrack (+ i 1)))]
+
+      ; __h or BlankSequence[h]
+      [(list (and pat_i (or (and (? has-initial-double-underscore?)
+                                 (app (λ (sym) (symbol-remove-initial-underscores sym 2)) h))
+                            (form: (BlankSequence h))))
+             pats ...)
+       (define matchers (compile-elements-patterns (rest patterns)))
+       (λ (ρ exprs i ks kf)
+         (define n (form-length exprs))
+         (define ei (form-ref exprs i))
+         (define (backtrack i)
+           (if (or (> i n)
+                   (let ([ei (form-ref exprs i)])
+                     (not (equal? (Head ei) h))))
+               (kf)
+               (matchers ρ exprs i
+                         ks
+                         (λ () (backtrack (+ i 1))))))
+         (if (equal? (Head ei) h)
+             (backtrack (+ i 1))
+             (kf)))]
+
+      
 
       ; This clause assumes that the pattern `pat_i` only matches one expression.
       ; All patterns that match a variable number of expressions such
@@ -3009,6 +3052,9 @@
             (not ((compile-pattern (Form 'Bar '(__ 1 2))) (Form 'Bar '(1 2))))
             (and ((compile-pattern (Form 'Bar '(__ 1 2))) (Form 'Bar '(3 1 2)))   #t)
             (and ((compile-pattern (Form 'Bar '(__ 1 2))) (Form 'Bar '(3 4 1 2))) #t)
+            ; __h or BlankSequence[h] matches 1 or more expressions with head `h`
+            (and ((compile-pattern (Form 'Bar '(__Integer 1 2))) (Form 'Bar '(3 4 1 2))) #t)
+            (not ((compile-pattern (Form 'Bar '(__Integer 1 2))) (Form 'Bar '(3 x 1 2))))
             ; ___ or BlankNullSequence[] matches 0 or more expressions
             (not ((compile-pattern (Form 'Bar '(___))) (Form 'Foo '(1 2 3))))
             (and ((compile-pattern (Form 'Foo '(___))) (Form 'Foo '(1 2 3))) #t)
