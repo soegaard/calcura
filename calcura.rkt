@@ -2651,7 +2651,11 @@
 
 (define-command Tan #:attributes '(Listable NumericFunction Protected)
   (λ (form)
-    form))
+    (match-parts form
+      [(z) (match z
+             [(inexact-real: r) (tan r)]
+             [_ form])]
+      [else form])))
 
 ;;;
 ;;; Natural Exponential
