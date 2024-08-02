@@ -9,6 +9,11 @@
 ;;; Dependencies
 ;;;
 
+(require "bfracket.rkt"
+         math/bigfloat
+         (only-in racket/math   pi))
+
+
 (require racket/format
          racket/hash-code
          racket/list
@@ -21,7 +26,6 @@
          racket/sequence
          math/flonum
          (except-in math/number-theory permutations)
-         (only-in racket/math pi sgn)
          "structs.rkt"
          "for-parts.rkt"
          "vector-utils.rkt"
@@ -217,11 +221,11 @@
 (define (exact-rational? x)   (and (number? x) (exact? x) (real? x)))
 
 (define (inexact-real x)      (and (number? x) (inexact? x) (real? x)))
-(define (negative-real? x)    (and (real?   x) (negative? x)))
-(define (positive-real? x)    (and (real?   x) (positive? x)))
+(define (negative-real? x)    (and (number? x) (real?   x)  (negative? x)))
+(define (positive-real? x)    (and (number? x) (real?   x)  (positive? x)))
 
-(define (negative-rational? x) (and (rational? x) (negative? x)))
-(define (positive-rational? x) (and (rational? x) (positive? x)))
+(define (negative-inexact? x) (and (number? x) (inexact? x) (negative? x)))
+(define (positive-inexact? x) (and (number? x) (inexact? x) (positive? x)))
 
 
 
@@ -243,6 +247,7 @@
 
                          [integer:       exact-integer?]
                          [flonum:        flonum?]
+                         [bigfloat:      bigfloat?]
                          [inexact-real:  inexact-real?]
 
                          [real:          real?]
@@ -254,12 +259,12 @@
                          [negative-integer:  negative-integer?]
                          [positive-real:     positive-real?]
                          [negative-real:     negative-real?]
-                         [positive-rational: positive-rational?]
-                         [negative-rational: negative-rational?]
+                         ; [positive-rational: positive-rational?]
+                         ; [negative-rational: negative-rational?]
 
                          [odd:               (λ (x) (and (exact-integer? x) (odd?  x)))]
                          [even:              (λ (x) (and (exact-integer? x) (even? x)))]
-                         
+
                          [symbol:        symbol?]
                          [atom:          atom?]
                          [boolean:       boolean?]
@@ -1502,6 +1507,7 @@
     (define (power-exponent f) (form-ref f 2))
     
     (λ (form)
+      ; (displayln (FullForm form))
       (case (form-length form)
         [(2) (define a (form-ref form 1))
              (define b (form-ref form 2))
@@ -1965,40 +1971,35 @@
       ; (displayln (FullForm form))
       (match-parts form
         ; Power[x,y] = ...
-        [(x y) (cond
-                 ; fast path
-                 [(and (inexact-real? x) (inexact-real? y))  (expt x y)]
-                 ; x¹ = x 
-                 [(equal? y 1)   x]
-                 ; x⁰ = 1
-                 [(equal? y 0)   1]
-                 ; 1^x = 1
-                 [(equal? x 1)   1]
-                 ; 
-                 [(and (integer? x) (integer? y))           (expt x y)]
-
-                 ; x^(1/2) = sqrt(x)
-                 [(and (positive-integer? x) (equal? y 1/2)) (sqrt-natural form x)]
-
-                 [(equal? y 1/2) (if (and (rational? x) (= (numerator x) 1))
-                                     (Power (Power (denominator x) 1/2) -1)
-                                     form)]
-                 ; x^-1                 
-                 [(and (rational? x) (equal? y -1))          (/ 1 x)]
-
-                 ; (ab)^c = a^c b^c  only if c<>0 is an integer
-                 [(and (has-head? x 'Times) (integer? y)) (define factors (for/parts ([x (in-elements x)])
-                                                                            (Power x y)))
-                                                          (MakeForm 'Times factors)]
-                 ; (a^b)^c = a^(bc) only if c is an integer
-                 [(and (and (has-head? x 'Power) (= (form-length x) 2))
-                       (integer? y))                
-                  (define a (form-ref x 1))
-                  (define b (form-ref x 2))
-                  (Power a (Times b y))]
-                 
-                 ; default
-                 [else form])]
+        [(x y) 
+         (match* (x y)
+           ; fast path
+           [((flonum: x) (flonum: y))           (flexpt x y)]
+           ; x¹ = x 
+           [(x 1) x]
+           ; x⁰ = 1
+           [(x 0) 1]
+           ; 1^x = 1
+           [(1 y) 1]
+           [((integer: x) (integer: y))         (expt x y)]
+           ; x^(1/2) = sqrt(x)
+           [((positive-integer: x) 1/2)         (sqrt-natural form x)]
+           [(x 1/2)                             (if (and (exact-rational? x) (= (numerator x) 1))
+                                                    (Power (Power (denominator x) 1/2) -1)
+                                                    form)]
+           ; x^-1                 
+           [((rational: x) -1)                  (/ 1 x)]
+           ; (ab)^c = a^c b^c  only if c<>0 is an integer
+           [((head: 'Times) (integer: y))       (define factors (for/parts ([x (in-elements x)])
+                                                                  (Power x y)))
+                                                (MakeForm 'Times factors)]
+           ; (a^b)^c = a^(bc) only if c is an integer
+           [((form: (Power _ _)) (integer: y))  (define a (form-ref x 1))
+                                                (define b (form-ref x 2))
+                                                (Power a (Times b y))]
+           
+           ; default
+           [(_ _) form])]
         ; 0, 1, 3 or more arguments
         [else form]))))
 
@@ -2292,7 +2293,7 @@
 ;   Operates on every level of `expr`.
 (define-command ExpandAll #:attributes '(Protected)
   (λ (form)
-    (displayln (FullForm form))
+    ; (displayln (FullForm form))
     (match-parts form
       ; Expand products
       [( (form: (Times (form: (Plus expr1 ...)) (form: (Plus expr2 ...)))) )
@@ -2350,8 +2351,9 @@
   (λ (form)
     (match-parts form
       [(z) (match z
-             [(flonum: r) (flsqrt r)]
-             [else        (Power z 1/2)])]
+             [(flonum:   r.0)    (flsqrt r.0)]
+             [(bigfloat: r.bf)   (bfsqrt r.bf)]
+             [else               (Power z 1/2)])]
       [else form])))
 
 ;;;
@@ -2390,10 +2392,11 @@
         [(z) ; argument is in radians
          ; Cos[z] = ...
          (match z
-           [(flonum: r)                                (flcos r)]           
+           [(flonum:   r)                              (flcos r)]
+           [(bigfloat: r.0)                            (bfcos r.0)]
            [0                                           1]
            ['Pi                                        -1]
-           [(negative-rational: α)                     (Cos (- α))]
+           [(negative-real: α)                         (Cos (- α))]
            [(form: (ktimes: (integer: k) 'Pi))         (if (even? k) 1 -1)]
            ; Cos is even
            [(form: (Times (negative-real:     α) u))   (Cos (Times (- α) u))]
@@ -2444,14 +2447,15 @@
          ; Sin[z] = ...
          (match z
            ; Numeric
-           [(flonum: r) (flsin r)]
+           [(flonum:   r.0)                      (flsin r.0)]
+           [(bigfloat: r.bf)                     (bfsin r.bf)]
            ; Exact zeros
            [0                                    0]
            ['Pi                                  0]
            [(form: (Times (integer: _) 'Pi))     0]
            ; Sin is odd
            [(form: (Times (negative-real: α) u))       (Times -1 (Sin (Times (- α) u)))]
-           [(negative-rational: α)                     (Minus (Sin (- α)))]
+           [(negative-real: α)                         (Minus (Sin (- α)))]
            ; Sin[β/2 Pi] = ±1
            [(form: (Times α 'Pi))
             #:when (integer? (* 2 α))                  (if (= (remainder (* 2 α) 4) 1) 1 -1)]
@@ -2874,7 +2878,7 @@
             (equal? (Order (Times 2 'x)            (Times 2 (Power 'x 2))  )   1)
             (equal? (Order (Times 2 (Power 'x 2))  (Times 2        'x))       -1))
       "Pattern Matching"
-      (list (and ((compile-pattern (ToExpression '_))       (List 1 2 3)) #t)
+      (and  (and ((compile-pattern (ToExpression '_))       (List 1 2 3)) #t)
             (and ((compile-pattern (ToExpression '(Blank))) (List 1 2 3)) #t)            
             (and ((compile-pattern (ToExpression '_List))   (List 1 2 3)) #t)
             (not ((compile-pattern (ToExpression '_List))   42))
@@ -2937,6 +2941,7 @@
             (equal? (FullForm (Power 1 'x))                1)
             (equal? (Power 2 3)                            8)
             (equal? (Power 4 1/2)                          2)
+            (equal? (FullForm (Power 'x 1/2))              '(Power x 1/2))                     
             (equal? (FullForm (Power (Times 'a 'b)    3))  '(Times (Power a 3) (Power b 3)))
             (equal? (FullForm (Power (Times 'a 'b 'c) 3))  '(Times (Power a 3) (Power b 3) (Power c 3)))
             (equal? (FullForm (Power (Times 'a 'b)    'x)) '(Power (Times a b) x))
@@ -2945,8 +2950,9 @@
       "Divide"
       (and  (equal? (FullForm (Divide 'Pi 2))              '(Times 1/2 Pi)))  ; note the order
       "Sqrt"
-      (and  (equal? (Sqrt 3.) (flsqrt 3.))
-            (equal? (FullForm (Sqrt 3)) '(Power 3 1/2)))
+      (and  (equal? (Sqrt 3.)            (flsqrt 3.))
+            (equal? (FullForm (Sqrt 'x)) '(Power x 1/2))
+            (equal? (FullForm (Sqrt 3))  '(Power 3 1/2)))
       "Sin"
       (and  (equal? (Sin 2.)               (flsin 2.))
             (equal? (Sin 0)                0)

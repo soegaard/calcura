@@ -20,11 +20,11 @@
        (begin
          (provide name)
          (define (name x)
-           (displayln (list name x))
+           ; (displayln (list name x))
            (cond  
              [(number? x)   (%name x)]
              [(bigfloat? x) (bfname x)]
-             [else          (Form name (list x))]))))]))
+             [else          (Form 'calcura-name (list x))]))))]))
 
 
 (define-fun sin %sin bfsin Sin)
@@ -79,7 +79,7 @@
        (begin
          (provide name)
          (define (name x y)
-           (displayln (list name x y))
+           ; (displayln (list 'name x y))
            (cond  
              [(and (number? x)   (number?   y)) (%name  x y)]
              [(and (bigfloat? x) (bigfloat? y)) (bfname x y)]
