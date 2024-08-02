@@ -11,7 +11,7 @@
 
 (require "bfracket.rkt"
          math/bigfloat
-         (only-in racket/math   pi))
+         (only-in racket/math pi))
 
 
 (require racket/format
@@ -227,6 +227,7 @@
 (define (negative-inexact? x) (and (number? x) (inexact? x) (negative? x)))
 (define (positive-inexact? x) (and (number? x) (inexact? x) (positive? x)))
 
+(define (float? x) (or (flonum? x) (bigfloat? x)))
 
 
 
@@ -246,8 +247,11 @@
                          [one:           exact-one?]
 
                          [integer:       exact-integer?]
+
                          [flonum:        flonum?]
                          [bigfloat:      bigfloat?]
+                         [float:         float?]    ; flonum or bigfloat
+
                          [inexact-real:  inexact-real?]
 
                          [real:          real?]
@@ -1975,6 +1979,7 @@
          (match* (x y)
            ; fast path
            [((flonum: x) (flonum: y))           (flexpt x y)]
+           [((float: x)  (float: y))            (expt x y)]
            ; x¹ = x 
            [(x 1) x]
            ; x⁰ = 1
@@ -2393,7 +2398,7 @@
          ; Cos[z] = ...
          (match z
            [(flonum:   r)                              (flcos r)]
-           [(bigfloat: r.0)                            (bfcos r.0)]
+           [(bigfloat: r)                              (bfcos r)]
            [0                                           1]
            ['Pi                                        -1]
            [(negative-real: α)                         (Cos (- α))]
@@ -2447,8 +2452,8 @@
          ; Sin[z] = ...
          (match z
            ; Numeric
-           [(flonum:   r.0)                      (flsin r.0)]
-           [(bigfloat: r.bf)                     (bfsin r.bf)]
+           [(flonum:   r)                        (flsin r)]
+           [(bigfloat: r)                        (bfsin r)]
            ; Exact zeros
            [0                                    0]
            ['Pi                                  0]
@@ -2508,6 +2513,8 @@
   (λ (form)
     (match-parts form
       [((form: (Log u))) u]
+      [(flonum:   r)     (flexp r)]
+      [(bigfloat: r)     (bfexp r)]
       [(expr)            (Power 'E expr)]
       [else              form])))
 
@@ -2527,7 +2534,9 @@
        (match z
          [1                    0]
          ['E                   1]
-         [(inexact-real: r)    (log r)]
+         [(flonum: r)          (fllog r)]
+         [(bigfloat: r)        (bflog r)]
+         ; [(inexact-real: r)    (log r)]
          [0                    (Minus 'Infinity)]
          [(integer: n)         (if (> n 0)
                                    form
@@ -2868,8 +2877,7 @@
             (equal? (AtomQ (List 'foo))    #f)
             
             (equal? (Catenate (List (List 1 2 3) (Missing) (List 4 5 6))) (List 1 2 3 4 5 6))
-            (equal? (Join (List 1 2 3) (List 4 5 6))                      (List 1 2 3 4 5 6))
-            )
+            (equal? (Join (List 1 2 3) (List 4 5 6))                      (List 1 2 3 4 5 6)))
       "Order"
       (and  (equal? (Order 1 'x)   1)
             (equal? (Order 'x 1)  -1)

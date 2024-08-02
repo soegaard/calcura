@@ -19,6 +19,8 @@
 (require "structs.rkt")
 ;; (struct expr (hc)              #:transparent) ; hc = hash code
 ;; (struct form expr (head parts) #:transparent) ; parts = (vector #f element ...)
+(require (only-in math/bigfloat bigfloat?))
+
 
 (provide atom?
 
@@ -52,6 +54,7 @@
 
 (define (atom? x)
   (or (number? x)
+      (bigfloat? x)
       (symbol? x)
       (boolean? x)   ; Use 'True and 'False ?
       (string? x)))
@@ -159,6 +162,7 @@
              [(number?   expr) 'Number]
              [(boolean?  expr) 'Boolean]
              [(string?   expr) 'String]
+             [(bigfloat? expr) 'Number]
              [else
               (error 'Head (~a "internal error - implement Head for: " expr))])]
       ; Wrap expression with head
