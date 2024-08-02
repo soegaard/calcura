@@ -22,6 +22,7 @@
          math/flonum
          (except-in math/number-theory permutations)
          (only-in racket/math pi sgn)
+         "structs.rkt"
          "for-parts.rkt"
          "vector-utils.rkt"
          "match-utils.rkt")
@@ -100,8 +101,8 @@
 
 ; As a convention all functions that return forms (or atoms) are capitalized.
 
-(struct expr (hc)              #:transparent) ; hc = hash code
-(struct form expr (head parts) #:transparent) ; parts = (vector #f element ...)
+;; (struct expr (hc)              #:transparent) ; hc = hash code
+;; (struct form expr (head parts) #:transparent) ; parts = (vector #f element ...)
 
 (define (expression-hash-code expr)
   (if (expr? expr)
