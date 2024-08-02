@@ -15,80 +15,85 @@
 
 (define-syntax (define-fun stx)
   (syntax-case stx ()
-    [(_ name %name bfname)
+    [(_ name %name bfname calcura-name)
      (syntax/loc stx 
        (begin
          (provide name)
          (define (name x)
+           (displayln (list name x))
            (cond  
              [(number? x)   (%name x)]
              [(bigfloat? x) (bfname x)]
              [else          (Form name (list x))]))))]))
 
 
-(define-fun sin %sin bfsin)
-(define-fun cos %cos bfcos)
-(define-fun tan %tan bftan)
+(define-fun sin %sin bfsin Sin)
+(define-fun cos %cos bfcos Cos)
+(define-fun tan %tan bftan Tan)
 
-(define-fun asin %asin bfasin)
-(define-fun acos %acos bfacos)
-(define-fun atan %atan bfatan)
+(define-fun asin %asin bfasin ArcSin)
+(define-fun acos %acos bfacos ArcCos)
+(define-fun atan %atan bfatan ArcTan)
 
-(define-fun sinh %sinh bfsinh)
-(define-fun cosh %cosh bfcosh)
-(define-fun tanh %tanh bftanh)
+(define-fun sinh %sinh bfsinh Sinh)
+(define-fun cosh %cosh bfcosh Cosh)
+(define-fun tanh %tanh bftanh Tanh)
 
-(define-fun asinh %asinh bfasinh)
-(define-fun acosh %acosh bfacosh)
-(define-fun atanh %atanh bfatanh)
+(define-fun asinh %asinh bfasinh ArcSinh)
+(define-fun acosh %acosh bfacosh ArcCosh)
+(define-fun atanh %atanh bfatanh ArcTanh)
 
-(define-fun exp %exp bfexp)
-(define-fun ln  %log bflog)
+(define-fun exp %exp bfexp Exp)
+(define-fun ln  %log bflog Log)
 
-(define-fun sqr  %sqr  bfsqr)
-(define-fun abs  %abs  bfabs)
-(define-fun sgn  %sgn  bfsgn)
-(define-fun sqrt %sqrt bfsqrt)
+(define-fun sqr  %sqr  bfsqr  Sqr)
+(define-fun abs  %abs  bfabs  Abs)
+(define-fun sgn  %sgn  bfsgn  Sign)
+(define-fun sqrt %sqrt bfsqrt Sqrt)
 
-(define-fun zero?     %zero?     bfzero?)
-(define-fun positive? %positive? bfpositive?)
-(define-fun negative? %negative? bfnegative?)
-(define-fun integer?  %integer?  bfinteger?)
-(define-fun even?     %even?     bfeven?)
-(define-fun odd?      %odd?      bfodd?)
-(define-fun rational? %rational? bfrational?)
-(define-fun infinite? %infinite? bfinfinite?)
-(define-fun nan?      %nan?      bfnan?)
+(define-fun zero?     %zero?     bfzero?      PossibleZeroQ)
+(define-fun positive? %positive? bfpositive?  Positive)
+(define-fun negative? %negative? bfnegative?  Negative)
+(define-fun integer?  %integer?  bfinteger?   IntegerQ)
+(define-fun even?     %even?     bfeven?      EvenQ)
+(define-fun odd?      %odd?      bfodd?       OddQ)
+(define-fun rational? %rational? bfrational?  RationalQ)
+(define-fun infinite? %infinite? bfinfinite?  InfinityQ) ; find correct name: Infinity represents a positive, infinite quantity
+(define-fun nan?      %nan?      bfnan?       NaNQ)
 
-(define-fun truncate  %truncate  bftruncate)
-(define-fun floor     %floor     bffloor)
-(define-fun ceiling   %ceiling   bfceiling)
-(define-fun round     %round     bfround)
+(define-fun truncate  %truncate  bftruncate   Truncate)  ; find correct name
+(define-fun floor     %floor     bffloor      Floor)
+(define-fun ceiling   %ceiling   bfceiling    Ceiling)
+(define-fun round     %round     bfround      Round)
 
 ; bffrac
 ; bfrint
 
 (define-syntax (define-fun2 stx)
   (syntax-case stx ()
-    [(_ name %name bfname)
+    #;[(_ name %name bfname)
+     (syntax/loc stx 
+       (define-fun2 name %name bfname name))]
+    [(_ name %name bfname calcura-name)
      (syntax/loc stx 
        (begin
          (provide name)
          (define (name x y)
+           (displayln (list name x y))
            (cond  
              [(and (number? x)   (number?   y)) (%name  x y)]
              [(and (bigfloat? x) (bigfloat? y)) (bfname x y)]
              [(and (number? x)   (bigfloat? y)) (name x (bigfloat->flonum y))]
              [(and (bigfloat? x) (number?   y)) (name (bigfloat->flonum x) y)]
-             [else (Form name (list x y))]))))]))
+             [else (Form 'calcura-name (list x y))]))))]))
 
-(define-fun2 =  %=  bf=)
-(define-fun2 >  %>  bf>)
-(define-fun2 <  %<  bf<)
-(define-fun2 >= %>= bf>=)
-(define-fun2 <= %<= bf<=)
+(define-fun2 =  %=  bf=  Equal)       ; aka ==
+(define-fun2 >  %>  bf>  Greater) 
+(define-fun2 <  %<  bf<  Less)
+(define-fun2 >= %>= bf>= GreaterEqual)
+(define-fun2 <= %<= bf<= LessEqual)
 
-(define-fun2 expt %expt bfexpt)
+(define-fun2 expt %expt bfexpt Power)
 
 (provide log)
 (define (log b [x #f])
@@ -107,7 +112,7 @@
        (log b (bigfloat->flonum x))]
       [(and (bigfloat? b) (number? x))
        (log (bigfloat->flonum b) x)]
-      [else (Form 'log (list b x))])))
+      [else (Form 'Log (list b x))])))
 
 (provide max)
 (define (max . xs)
@@ -204,11 +209,11 @@
       (error 'denominator (~a "number or bigfloat expected, got: " x))))
 
 
-; Conversion from degrees to radians
+;; ; Conversion from degrees to radians
 
-(define (%deg  r)   (*   (/ pi        180.)      r))
-(define (bfdeg r) (bf* (bf/ pi.bf (bf 180.)) (bf r)))
-(define-fun deg %deg bfdeg)
+;; (define (%deg  r)   (*   (/ pi        180.)      r))
+;; (define (bfdeg r) (bf* (bf/ pi.bf (bf 180.)) (bf r)))
+;; (define-fun deg %deg bfdeg )
 
 
 
