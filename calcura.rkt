@@ -213,7 +213,7 @@
     ...))
 
 (define (exact-zero? x)       (and (number? x) (exact? x) (zero? x)))
-(define (exact-one? x)        (and (number? x) (exact? x) (= x 1)))
+(define (exact-one? x)        (and (number? x) (exact? x) (or (equal? x 1) (equal? x 1.bf))))
 
 (define (positive-integer? x) (and (number? x) (exact? x) (integer? x) (positive? x)))
 (define (negative-integer? x) (and (number? x) (exact? x) (integer? x) (negative? x)))
@@ -1633,6 +1633,10 @@
 (define (Eval1 expr)
   ; (displayln (list 'Eval1 (FullForm expr)))
   (cond
+    [(bigfloat? expr) (cond
+                        [(bfinteger?  expr) (bigfloat->integer  expr)]
+                        [(bfrational? expr) (bigfloat->rational expr)]
+                        [else expr])]
     [(atom? expr) expr]
     [(form? expr) (define form expr)
                   ; 1. Evaluate head
@@ -1909,9 +1913,9 @@
     ; This handles the case: Thread[f[args], h]
     ; The form orig-form is returned, if nothing can be done.
     (match-parts form
-      [(args)   (do-thread2 form args 'List)]
-      [(args h) (do-thread2 form args h)]
-      [else     form])))
+      [(f-args)   (do-thread2 form f-args 'List)]
+      [(f-args h) (do-thread2 form f-args h)]
+      [else       form])))
 
 
 (define (do-thread2 orig-form f-args h)
@@ -1919,7 +1923,7 @@
   (match f-args
     [(atom: _) orig-form]
 
-    [(form: (f args))
+    [(? form? f-args)     
      ; 1. Determine the length of arguments with head h.
      ;    To thread, these must all have the same length.
      (define h-indices (for/list ([i   (in-naturals 1)]
@@ -1934,7 +1938,7 @@
      (cond
        [(not same?)       orig-form]
        [(null? h-indices) orig-form]
-       [else              (define dim (car h-lengths))                          
+       [else              (define dim (car h-lengths))
                           (MakeForm h 
                                     (for/parts ([i (in-inclusive-range 1 dim)])
                                       (MakeForm (Head f-args) 
@@ -1943,7 +1947,8 @@
                                                       (form-ref arg i)
                                                       arg)))))])]
 
-    [else orig-form]))
+    [else
+     orig-form]))
 
 
 
@@ -3107,7 +3112,7 @@
       "Exposed Bug"
       (and  (equal? (Order (Power 'y -1) (Power 'x -1)) -1))
       "Rascas (Tests from the Rascas test suite)"
-      (list  (equal? (FullForm (Eval (Minus (Divide (Times 'x 'y) 3))))
+      (and  (equal? (FullForm (Eval (Minus (Divide (Times 'x 'y) 3))))
                     '(Times -1/3 x y))
             (equal? (FullForm (Power (Power (Power 'x 1/2) 1/2) 8))
                     '(Power x 2))
@@ -3120,7 +3125,7 @@
                     '(Times x y (Power z 4)))
             )
       "Thread"
-      (list (equal? (FullForm (Thread (Apply 'f (List (List 1 2 3)))))
+      (and  (equal? (FullForm (Thread (Apply 'f (List (List 1 2 3)))))
                     '(List (f 1) (f 2) (f 3)))
             (equal? (FullForm (Thread (Apply 'f (List (List 1 2 3) 'x))))
                     '(List (f 1 x) (f 2 x) (f 3 x)))
