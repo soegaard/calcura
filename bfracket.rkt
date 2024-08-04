@@ -1,9 +1,15 @@
 #lang racket
 ;;;
-;;; Inexact Numbers
+;;; Floating Point Numbers
 ;;;
 
-; Both floating points and big floats are considered inexact numbers.
+; FIX:
+
+; (+ (bf 1) 3)
+
+; And ... fix similar issues for *, -, / etc.
+
+; Both flonums and big floats are considered real numbers.
 ; The form 
 ;     (define-syn sin %sin bfsin)
 ; where %sin  is the standard sin function from `racket`
@@ -22,9 +28,30 @@
          (define (name x)
            ; (displayln (list name x))
            (cond  
-             [(number? x)   (%name x)]
+             [(%number? x)  (%name x)]
              [(bigfloat? x) (bfname x)]
              [else          (Form 'calcura-name (list x))]))))]))
+
+; A number is real, if it represent a number on the real number line.
+; This flonums, bigfloats, fixnums, bigints and rational numbers are all real.
+(provide real?)
+(define (real? x)
+  (or (%real? x) (bigfloat? x)))
+
+; Bigfloats are numbers
+(provide number?)
+(define (number? x)
+  (or (%number? x)
+      (bigfloat? x)))
+
+(provide exact?)
+(define (exact? x)
+  (or (and (%number? x) (%exact? x))
+      (bigfloat? x)))
+
+(provide inexact?)
+(define (inexact? x)
+  (and (%number? x) (%inexact? x)))
 
 
 (define-fun sin %sin bfsin Sin)
@@ -118,12 +145,12 @@
 (define (max . xs)
   (define (->flonum x) (if (bigfloat? x) (bigfloat->flonum x) x))
   (cond 
-    [(andmap real? xs)     (apply %max xs)]
+    [(andmap %real? xs)    (apply %max xs)]
     [(andmap bigfloat? xs) (apply bfmax xs)]
     [else
      (for/fold ([m (->flonum (first xs))]) ([x (in-list (rest xs))])
        (cond
-         [(real? x)     (%max m x)]
+         [(%real? x)    (%max m x)]
          [(bigfloat? x) (%max m (bigfloat->flonum x))]
          [else (error 'max (~a "number or bigfloat expected, got: " x))]))]))
 
@@ -131,12 +158,12 @@
 (define (min . xs)
   (define (->flonum x) (if (bigfloat? x) (bigfloat->flonum x) x))
   (cond 
-    [(andmap real? xs)     (apply %min xs)]
+    [(andmap %real? xs)    (apply %min xs)]
     [(andmap bigfloat? xs) (apply bfmin xs)]
     [else
      (for/fold ([m (->flonum (first xs))]) ([x (in-list (rest xs))])
        (cond
-         [(real? x)     (%min m x)]
+         [(%real? x)    (%min m x)]
          [(bigfloat? x) (%min m (bigfloat->flonum x))]
          [else (error 'min (~a "number or bigfloat expected, got: " x))]))]))
 
@@ -144,12 +171,13 @@
 (define (+ . xs)
   (define (->flonum x) (if (bigfloat? x) (bigfloat->flonum x) x))
   (cond 
-    [(andmap real? xs)     (%sum xs)]
+    [(andmap %real? xs)    (%sum xs)]
     [(andmap bigfloat? xs) (apply bf+ xs)]
+    [(null? xs)            0]
     [else
-     (for/fold ([m 0.0]) ([x (in-list xs)])
+     (for/fold ([m (first xs)]) ([x (in-list (rest xs))])
        (cond
-         [(real? x)     (%+ m x)]
+         [(%real? x)    (%+ m x)]
          [(bigfloat? x) (%+ m (bigfloat->flonum x))]
          [else (error '+ (~a "number or bigfloat expected, got: " x))]))]))
 
@@ -157,12 +185,12 @@
 (define (* . xs)
   (define (->flonum x) (if (bigfloat? x) (bigfloat->flonum x) x))
   (cond 
-    [(andmap real? xs)     (apply %* xs)]
+    [(andmap %real? xs)    (apply %* xs)]
     [(andmap bigfloat? xs) (apply bf* xs)]
     [else
      (for/fold ([m (->flonum (first xs))]) ([x (in-list (rest xs))])
        (cond
-         [(real? x)     (%* m x)]
+         [(%real? x)    (%* m x)]
          [(bigfloat? x) (%* m (bigfloat->flonum x))]
          [else (error '* (~a "number or bigfloat expected, got: " x))]))]))
 
@@ -170,12 +198,12 @@
 (define (- . xs)
   (define (->flonum x) (if (bigfloat? x) (bigfloat->flonum x) x))
   (cond 
-    [(andmap real? xs)     (apply %- xs)]
+    [(andmap %real? xs)    (apply %- xs)]
     [(andmap bigfloat? xs) (apply bf- xs)]
     [else
      (for/fold ([m (->flonum (first xs))]) ([x (in-list (rest xs))])
        (cond
-         [(real? x)     (%- m x)]
+         [(%real? x)    (%- m x)]
          [(bigfloat? x) (%- m (bigfloat->flonum x))]
          [else (error '- (~a "number or bigfloat expected, got: " x))]))]))
 
@@ -183,12 +211,12 @@
 (define (/ . xs)
   (define (->real x) (if (bigfloat? x) (bigfloat->real x) x))
   (cond 
-    [(andmap real? xs)     (apply %/ xs)]
+    [(andmap %real? xs)    (apply %/ xs)]
     [(andmap bigfloat? xs) (apply bf/ xs)]
     [else
      (for/fold ([m (->real (first xs))]) ([x (in-list (rest xs))])
        (cond
-         [(real? x)     (%/ m x)]
+         [(%real? x)    (%/ m x)]
          [(bigfloat? x) (%/ m (bigfloat->real x))]
          [else (error '/ (~a "number or bigfloat expected, got: " x))]))]))
 
