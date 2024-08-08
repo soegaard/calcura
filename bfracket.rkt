@@ -1,7 +1,194 @@
 #lang racket
 ;;;
-;;; Floating Point Numbers
+;;; Big Float Racket (BFRacket)
 ;;;
+
+; The goal of this module is to extend Racket with a new number type: bigfloat.
+
+; Importing this module will replace all standard mathematical functions
+; with versions that know about bigfloats.
+
+
+;; 4.3 Numbers
+
+;; All numbers are complex numbers. Some of them are real numbers, and
+;; all of the real numbers that can be represented are also rational
+;; numbers, except for +inf.0 (positive infinity), +inf.f
+;; (single-precision variant, when enabled via read-single-flonum),
+;; -inf.0 (negative infinity), -inf.f (single-precision variant, when
+;; enabled), +nan.0 (not-a-number), and +nan.f (single-precision variant,
+;; when enabled). Among the rational numbers, some are integers, because
+;; round applied to the number produces the same number.
+
+;; Changes: Big floats are real numbers.
+;;          Some big floats like +inf.bf are not rational.
+
+
+;; 4.3.1 Number Types
+
+
+; Bigfloats are numbers
+(provide number?)
+(define (number? x)
+  (or (%number? x)
+      (bigfloat? x)))
+
+; All numbers are complex numbers.
+(provide complex?)
+(define (complex? x)
+  (number? x))
+
+; A number is real, if it represent a number on the real number line.
+; This flonums, bigfloats, fixnums, bigints and rational numbers are all real.
+; Note: Flonums such as +inf.0 are also real numbers.
+(provide real?)
+(define (real? x)
+  (or (%real? x)
+      (bigfloat? x)))
+
+(provide rational?)
+(define (rational? x)
+  (or (%rational? x)
+      (bfrational? x)))
+
+(provide integer?)
+; Number like 2.0 and 2.0.bf also represent integers.
+(define (integer? x)
+  (or (%integer?  x)
+      (bfinteger? x)))
+
+(provide exact-integer?)
+(define (exact-integer? x)
+  (or (%exact-integer?  x)
+      (bfinteger? x)))
+
+(provide exact-nonnegative-integer?)
+(define (exact-nonnegative-integer? x)
+  (or (%exact-nonnegative-integer?  x)
+      (and (bfinteger? x)
+           (bf>= x 0.bf))))
+
+(provide exact-positive-integer?)
+(define (exact-positive-integer? x)
+  (or (%exact-positive-integer?  x)
+      (and (bfinteger? x)
+           (bf> x 0.bf))))
+
+; Since bigfloats are exact, inexact-real? is unchanged.
+(provide (rename-out [%inexact-real? inexact-real?]))
+
+; Big floats are not fixnums, so fixnum? is unchanged.
+(provide (rename-out [%fixnum?        fixnum?]
+                     [%flonum?        flonum?]
+                     [%double-flonum? double-flonum?]
+                     [%single-flonum? single-flonum?]
+                     
+                     [%single-flonum-available? single-flonum-available?]))
+
+(provide zero?)
+(define (zero? x)
+  (or (and (%number? x)  (%zero? x))
+      (and (bigfloat? x) (bfzero? x))))
+
+(provide positive?)
+(define (positive? x)
+  (or (and (%number? x)  (%positive? x))
+      (and (bigfloat? x) (bfpositive? x))))
+
+(provide negative?)
+(define (negative? x)
+  (or (and (%number? x)  (%negative? x))
+      (and (bigfloat? x) (bfnegative? x))))
+
+(provide even?)
+(define (even? x)
+  (or (and (%number? x)  (%even? x))
+      (and (bigfloat? x) (bfeven? x))))
+
+(provide odd?)
+(define (odd? x)
+  (or (and (%number? x)  (%odd? x))
+      (and (bigfloat? x) (bfodd? x))))
+
+
+(provide exact?)
+(define (exact? x)
+  (or (and (%number? x) (%exact? x))
+      (bigfloat? x)))
+
+(provide inexact?)
+(define (inexact? x)
+  (and (%number? x) (%inexact? x)))
+
+(provide inexact->exact)
+(define (inexact->exact x)
+  (cond
+    [(bigfloat? x) (if (bfrational? x)
+                       x
+                       (error 'inexact->exact (~a "no exact representation for " x)))]
+    [else          (%inexact->exact x)]))
+
+(provide exact->inexact)
+(define (exact->inexact x)
+  (cond
+    [(%number? x)  (%exact->inexact x)]
+    [(bigfloat? x) (bigfloat->flonum x)]
+    [else          (raise-arguments-error 'exact->inexact
+                                          "expected a number (bigfloats included)"
+                                          "x" x)]))
+                                          
+(provide (rename-out [%real->single-flonum real->single-flonum]
+                     [%real->double-flonum real->double-flonum]))
+
+
+;; Helpers
+
+(define (any-bigfloat? xs)
+  (for/or ([x (in-list xs)])
+    (bigfloat? x)))
+
+(define (all-bigfloat? xs)
+  (for/and ([x (in-list xs)])
+    (bigfloat? x)))
+
+(define (any-inexact? xs)
+  (for/or ([x (in-list xs)])
+    (inexact? x)))
+
+(define (all-inexact? xs)
+  (for/and ([x (in-list xs)])
+    (inexact? x)))
+
+
+
+;; 4.3.2 Generic Numerics
+; Most Racket numeric operations work on any kind of number.
+
+(provide +)
+
+(define +
+  (case-lambda
+    [()     0]
+    [(x)    x]
+    [(x y)  (cond
+              [(bigfloat? x)  
+               (cond
+                 [(bigfloat? y)              (bf+ x y)]
+                 [(or (real? y) (string? y)) (bf+ x (bf y))]
+                 [else                       (error '+ (~a "number (bigfloats included) expected, got: " y))])]
+              [(bigfloat? y)  
+               (cond
+                 [(or (real? x) (string? x)) (bf+ (bf x) y)]
+                 [else                       (error '+ (~a "number (bigfloats included) expected, got: " x))])]
+              [else
+               (%+ x y)])]
+    [xs (cond
+          [(any-inexact? xs)  (apply %+  (map exact->inexact xs))] ; todo: flsum ?
+          [(any-bigfloat? xs) (apply bf+ (map bf xs))]
+          [else               (apply %+ xs)])]))
+
+
+
 
 ; FIX:
 
@@ -32,26 +219,6 @@
              [(bigfloat? x) (bfname x)]
              [else          (Form 'calcura-name (list x))]))))]))
 
-; A number is real, if it represent a number on the real number line.
-; This flonums, bigfloats, fixnums, bigints and rational numbers are all real.
-(provide real?)
-(define (real? x)
-  (or (%real? x) (bigfloat? x)))
-
-; Bigfloats are numbers
-(provide number?)
-(define (number? x)
-  (or (%number? x)
-      (bigfloat? x)))
-
-(provide exact?)
-(define (exact? x)
-  (or (and (%number? x) (%exact? x))
-      (bigfloat? x)))
-
-(provide inexact?)
-(define (inexact? x)
-  (and (%number? x) (%inexact? x)))
 
 
 (define-fun sin %sin bfsin Sin)
@@ -78,13 +245,6 @@
 (define-fun sgn  %sgn  bfsgn  Sign)
 (define-fun sqrt %sqrt bfsqrt Sqrt)
 
-(define-fun zero?     %zero?     bfzero?      PossibleZeroQ)
-(define-fun positive? %positive? bfpositive?  Positive)
-(define-fun negative? %negative? bfnegative?  Negative)
-(define-fun integer?  %integer?  bfinteger?   IntegerQ)
-(define-fun even?     %even?     bfeven?      EvenQ)
-(define-fun odd?      %odd?      bfodd?       OddQ)
-(define-fun rational? %rational? bfrational?  RationalQ)
 (define-fun infinite? %infinite? bfinfinite?  InfinityQ) ; find correct name: Infinity represents a positive, infinite quantity
 (define-fun nan?      %nan?      bfnan?       NaNQ)
 
@@ -167,19 +327,6 @@
          [(bigfloat? x) (%min m (bigfloat->flonum x))]
          [else (error 'min (~a "number or bigfloat expected, got: " x))]))]))
 
-(provide +)
-(define (+ . xs)
-  (define (->flonum x) (if (bigfloat? x) (bigfloat->flonum x) x))
-  (cond 
-    [(andmap %real? xs)    (%sum xs)]
-    [(andmap bigfloat? xs) (apply bf+ xs)]
-    [(null? xs)            0]
-    [else
-     (for/fold ([m (first xs)]) ([x (in-list (rest xs))])
-       (cond
-         [(%real? x)    (%+ m x)]
-         [(bigfloat? x) (%+ m (bigfloat->flonum x))]
-         [else (error '+ (~a "number or bigfloat expected, got: " x))]))]))
 
 (provide *)
 (define (* . xs)
