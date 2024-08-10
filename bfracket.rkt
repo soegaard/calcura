@@ -159,19 +159,38 @@
   (for/and ([x (in-list xs)])
     (inexact? x)))
 
+(define (to-bf x)
+  (if (bigfloat? x)
+      x
+      (bf x)))
 
 
 ;; 4.3.2 Generic Numerics
+
 ; Most Racket numeric operations work on any kind of number.
 
-(provide +)
+; If inexact numbers are part of the input, then the result is inexact.
+; If there are bigfloats in the input (and no inexact numbers),
+; then the result is a bigfloat.
 
+
+(provide +)
 (define +
   (case-lambda
     [()     0]
     [(x)    x]
     [(x y)  (cond
-              [(bigfloat? x)  
+              [(inexact? x)
+               (cond
+                 [(inexact? y)  (%+ x y)]
+                 [(bigfloat? y) (%+ x (bigfloat->flonum y))]
+                 [else          (%+ x y)])]
+              [(inexact? y)
+               (cond                 
+                 [(bigfloat? x) (%+ (bigfloat->flonum x) y)]
+                 [else          (%+ x y)])]
+              ; Now: None of x and y are inexact
+              [(bigfloat? x)
                (cond
                  [(bigfloat? y)              (bf+ x y)]
                  [(or (real? y) (string? y)) (bf+ x (bf y))]
@@ -180,21 +199,172 @@
                (cond
                  [(or (real? x) (string? x)) (bf+ (bf x) y)]
                  [else                       (error '+ (~a "number (bigfloats included) expected, got: " x))])]
+              ; Now: Neither x or y are inexact or big floats.
               [else
                (%+ x y)])]
-    [xs (cond
-          [(any-inexact? xs)  (apply %+  (map exact->inexact xs))] ; todo: flsum ?
-          [(any-bigfloat? xs) (apply bf+ (map bf xs))]
-          [else               (apply %+ xs)])]))
+    [xs
+     (cond
+       [(any-inexact? xs)  (apply %+  (map exact->inexact xs))] ; todo: flsum ?
+       [(any-bigfloat? xs) (apply bf+ (map to-bf xs))]
+       [else               (apply %+ xs)])]))
+
+(provide *)
+(define *
+  (case-lambda
+    [()     1]
+    [(x)    x]
+    [(x y)  (cond
+              [(inexact? x)
+               (cond
+                 [(inexact? y)  (%* x y)]
+                 [(bigfloat? y) (%* x (bigfloat->flonum y))]
+                 [else          (%* x y)])]
+              [(inexact? y)
+               (cond                 
+                 [(bigfloat? x) (%* (bigfloat->flonum x) y)]
+                 [else          (%* x y)])]
+              ; Now: None of x and y are inexact
+              [(bigfloat? x)
+               (cond
+                 [(bigfloat? y)              (bf* x y)]
+                 [(or (real? y) (string? y)) (bf* x (bf y))]
+                 [else                       (error '* (~a "number (bigfloats included) expected, got: " y))])]
+              [(bigfloat? y)  
+               (cond
+                 [(or (real? x) (string? x)) (bf* (bf x) y)]
+                 [else                       (error '* (~a "number (bigfloats included) expected, got: " x))])]
+              ; Now: Neither x or y are inexact or big floats.
+              [else
+               (%* x y)])]
+    [xs
+     (cond
+       [(any-inexact? xs)  (apply %*  (map exact->inexact xs))]
+       [(any-bigfloat? xs) (apply bf* (map to-bf xs))]
+       [else               (apply %* xs)])]))
 
 
+(provide -)
+(define -
+  (case-lambda
+    [(x)    (if (bigfloat? x) (bf- x) (%- x))]
+    [(x y)  (cond
+              [(inexact? x)
+               (cond
+                 [(inexact? y)  (%- x y)]
+                 [(bigfloat? y) (%- x (bigfloat->flonum y))]
+                 [else          (%- x y)])]
+              [(inexact? y)
+               (cond                 
+                 [(bigfloat? x) (%- (bigfloat->flonum x) y)]
+                 [else          (%- x y)])]
+              ; Now: None of x and y are inexact
+              [(bigfloat? x)
+               (cond
+                 [(bigfloat? y)              (bf- x y)]
+                 [(or (real? y) (string? y)) (bf- x (bf y))]
+                 [else                       (error '- (~a "number (bigfloats included) expected, got: " y))])]
+              [(bigfloat? y)  
+               (cond
+                 [(or (real? x) (string? x)) (bf- (bf x) y)]
+                 [else                       (error '- (~a "number (bigfloats included) expected, got: " x))])]
+              ; Now: Neither x or y are inexact or big floats.
+              [else
+               (%- x y)])]
+    [xs
+     (cond
+       [(any-inexact? xs)  (apply %-  (map exact->inexact xs))] ; todo: flsum ?
+       [(any-bigfloat? xs) (apply bf- (map to-bf xs))]
+       [else               (apply %- xs)])]))
+
+(provide /)
+(define /
+  (case-lambda
+    [(x)    (if (bigfloat? x) (bf/ x) (%/ x))]
+    [(x y)  (cond
+              [(inexact? x)
+               (cond
+                 [(inexact? y)  (%/ x y)]
+                 [(bigfloat? y) (%/ x (bigfloat->flonum y))]
+                 [else          (%/ x y)])]
+              [(inexact? y)
+               (cond                 
+                 [(bigfloat? x) (%/ (bigfloat->flonum x) y)]
+                 [else          (%/ x y)])]
+              ; Now: None of x and y are inexact
+              [(bigfloat? x)
+               (cond
+                 [(bigfloat? y)              (bf/ x y)]
+                 [(or (real? y) (string? y)) (bf/ x (bf y))]
+                 [else                       (error '/ (~a "number (bigfloats included) expected, got: " y))])]
+              [(bigfloat? y)  
+               (cond
+                 [(or (real? x) (string? x)) (bf/ (bf x) y)]
+                 [else                       (error '/ (~a "number (bigfloats included) expected, got: " x))])]
+              ; Now: Neither x or y are inexact or big floats.
+              [else
+               (%/ x y)])]
+    [xs
+     (cond
+       [(any-inexact? xs)  (apply %/  (map exact->inexact xs))] ; todo: flsum ?
+       [(any-bigfloat? xs) (apply bf/ (map to-bf xs))]
+       [else               (apply %/ xs)])]))
 
 
-; FIX:
+(provide quotient)
+(define (quotient n m)
+  (unless (and (integer? n) (integer? m))
+    (error 'quotient "expected two integers"))
+  (let ([N (if (bigfloat? n) (bigfloat->integer n) n)]
+        [M (if (bigfloat? m) (bigfloat->integer m) m)])
+    (define q (%quotient N M))
+    (cond
+      [(inexact? q)                         q]
+      [(or (bigfloat? n) (bigfloat? m)) (bf q)]
+      [else                                 q])))
 
-; (+ (bf 1) 3)
+(provide remainder)
+(define (remainder n m)
+  (unless (and (integer? n) (integer? m))
+    (error 'remainder "expected two integers"))
+  (let ([N (if (bigfloat? n) (bigfloat->integer n) n)]
+        [M (if (bigfloat? m) (bigfloat->integer m) m)])
+    (define r (%remainder N M))
+    (cond
+      [(inexact? r)                         r]
+      [(or (bigfloat? n) (bigfloat? m)) (bf r)]
+      [else                                 r])))
 
-; And ... fix similar issues for *, -, / etc.
+(provide quotient/remainder)
+(define (quotient/remainder n m)
+  (unless (and (integer? n) (integer? m))
+    (error 'quotient/remainder "expected two integers"))
+  (let ([N (if (bigfloat? n) (bigfloat->integer n) n)]
+        [M (if (bigfloat? m) (bigfloat->integer m) m)])
+    (define-values (q r) (%quotient/remainder N M))
+    (define Q
+      (cond
+        [(inexact? q)                         q]
+        [(or (bigfloat? n) (bigfloat? m)) (bf q)]
+        [else                                 q]))
+    (define R
+      (cond
+        [(inexact? r)                         r]
+        [(or (bigfloat? n) (bigfloat? m)) (bf r)]
+        [else                                 r]))
+    (values Q R)))
+
+(provide modulo)
+(define (modulo n m)
+  (unless (and (integer? n) (integer? m))
+    (error 'modulo "expected two integers"))
+  (let ([N (if (bigfloat? n) (bigfloat->integer n) n)]
+        [M (if (bigfloat? m) (bigfloat->integer m) m)])
+    (define r (%modulo N M))
+    (cond
+      [(inexact? r)                         r]
+      [(or (bigfloat? n) (bigfloat? m)) (bf r)]
+      [else                                 r])))
+
 
 ; Both flonums and big floats are considered real numbers.
 ; The form 
@@ -208,7 +378,7 @@
 
 (define-syntax (define-fun stx)
   (syntax-case stx ()
-    [(_ name %name bfname calcura-name)
+    [(_ name %name bfname _)
      (syntax/loc stx 
        (begin
          (provide name)
@@ -217,155 +387,27 @@
            (cond  
              [(%number? x)  (%name x)]
              [(bigfloat? x) (bfname x)]
-             [else          (Form 'calcura-name (list x))]))))]))
+             [else          (error 'name (~a "expected a number (bigfloat included), got:" x))]))))]))
 
+(define (bfadd1 x) (bf+ x 1.bf))
+(define (bfsub1 x) (bf- x 1.bf))
 
+(define-fun add1 %add1 bfadd1 Add1)
+(define-fun sub1 %sub1 bfsub1 Sub1)
 
-(define-fun sin %sin bfsin Sin)
-(define-fun cos %cos bfcos Cos)
-(define-fun tan %tan bftan Tan)
-
-(define-fun asin %asin bfasin ArcSin)
-(define-fun acos %acos bfacos ArcCos)
-(define-fun atan %atan bfatan ArcTan)
-
-(define-fun sinh %sinh bfsinh Sinh)
-(define-fun cosh %cosh bfcosh Cosh)
-(define-fun tanh %tanh bftanh Tanh)
-
-(define-fun asinh %asinh bfasinh ArcSinh)
-(define-fun acosh %acosh bfacosh ArcCosh)
-(define-fun atanh %atanh bfatanh ArcTanh)
-
-(define-fun exp %exp bfexp Exp)
-(define-fun ln  %log bflog Log)
-
-(define-fun sqr  %sqr  bfsqr  Sqr)
 (define-fun abs  %abs  bfabs  Abs)
+
 (define-fun sgn  %sgn  bfsgn  Sign)
-(define-fun sqrt %sqrt bfsqrt Sqrt)
 
-(define-fun infinite? %infinite? bfinfinite?  InfinityQ) ; find correct name: Infinity represents a positive, infinite quantity
-(define-fun nan?      %nan?      bfnan?       NaNQ)
+; max
+; min
+; gcd
+; lcm
 
-(define-fun truncate  %truncate  bftruncate   Truncate)  ; find correct name
+(define-fun round     %round     bfround      Round)
 (define-fun floor     %floor     bffloor      Floor)
 (define-fun ceiling   %ceiling   bfceiling    Ceiling)
-(define-fun round     %round     bfround      Round)
-
-; bffrac
-; bfrint
-
-(define-syntax (define-fun2 stx)
-  (syntax-case stx ()
-    #;[(_ name %name bfname)
-     (syntax/loc stx 
-       (define-fun2 name %name bfname name))]
-    [(_ name %name bfname calcura-name)
-     (syntax/loc stx 
-       (begin
-         (provide name)
-         (define (name x y)
-           ; (displayln (list 'name x y))
-           (cond  
-             [(and (number? x)   (number?   y)) (%name  x y)]
-             [(and (bigfloat? x) (bigfloat? y)) (bfname x y)]
-             [(and (number? x)   (bigfloat? y)) (name x (bigfloat->flonum y))]
-             [(and (bigfloat? x) (number?   y)) (name (bigfloat->flonum x) y)]
-             [else (Form 'calcura-name (list x y))]))))]))
-
-(define-fun2 =  %=  bf=  Equal)       ; aka ==
-(define-fun2 >  %>  bf>  Greater) 
-(define-fun2 <  %<  bf<  Less)
-(define-fun2 >= %>= bf>= GreaterEqual)
-(define-fun2 <= %<= bf<= LessEqual)
-
-(define-fun2 expt %expt bfexpt Power)
-
-(provide log)
-(define (log b [x #f])
-  (let ([b (if x b 10)]
-        [x (if x x b)])
-    (cond
-      [(and (number? b) (number? x))
-       (cond [(= b 10) (/ (%log x) (%log 10))]
-             [(= b  2) (/ (%log x) (%log  2))]
-             [else     (/ (%log x) (%log  b))])]
-      [(and (bigfloat? b) (bigfloat? x))
-       (cond [(bf= b 10.bf) (bflog10 x)]
-             [(bf= b  2.bf) (bflog2 x)]
-             [else          (bf/ (bflog x) (bflog b))])]
-      [(and (number? b) (bigfloat? x))
-       (log b (bigfloat->flonum x))]
-      [(and (bigfloat? b) (number? x))
-       (log (bigfloat->flonum b) x)]
-      [else (Form 'Log (list b x))])))
-
-(provide max)
-(define (max . xs)
-  (define (->flonum x) (if (bigfloat? x) (bigfloat->flonum x) x))
-  (cond 
-    [(andmap %real? xs)    (apply %max xs)]
-    [(andmap bigfloat? xs) (apply bfmax xs)]
-    [else
-     (for/fold ([m (->flonum (first xs))]) ([x (in-list (rest xs))])
-       (cond
-         [(%real? x)    (%max m x)]
-         [(bigfloat? x) (%max m (bigfloat->flonum x))]
-         [else (error 'max (~a "number or bigfloat expected, got: " x))]))]))
-
-(provide min)
-(define (min . xs)
-  (define (->flonum x) (if (bigfloat? x) (bigfloat->flonum x) x))
-  (cond 
-    [(andmap %real? xs)    (apply %min xs)]
-    [(andmap bigfloat? xs) (apply bfmin xs)]
-    [else
-     (for/fold ([m (->flonum (first xs))]) ([x (in-list (rest xs))])
-       (cond
-         [(%real? x)    (%min m x)]
-         [(bigfloat? x) (%min m (bigfloat->flonum x))]
-         [else (error 'min (~a "number or bigfloat expected, got: " x))]))]))
-
-
-(provide *)
-(define (* . xs)
-  (define (->flonum x) (if (bigfloat? x) (bigfloat->flonum x) x))
-  (cond 
-    [(andmap %real? xs)    (apply %* xs)]
-    [(andmap bigfloat? xs) (apply bf* xs)]
-    [else
-     (for/fold ([m (->flonum (first xs))]) ([x (in-list (rest xs))])
-       (cond
-         [(%real? x)    (%* m x)]
-         [(bigfloat? x) (%* m (bigfloat->flonum x))]
-         [else (error '* (~a "number or bigfloat expected, got: " x))]))]))
-
-(provide -)
-(define (- . xs)
-  (define (->flonum x) (if (bigfloat? x) (bigfloat->flonum x) x))
-  (cond 
-    [(andmap %real? xs)    (apply %- xs)]
-    [(andmap bigfloat? xs) (apply bf- xs)]
-    [else
-     (for/fold ([m (->flonum (first xs))]) ([x (in-list (rest xs))])
-       (cond
-         [(%real? x)    (%- m x)]
-         [(bigfloat? x) (%- m (bigfloat->flonum x))]
-         [else (error '- (~a "number or bigfloat expected, got: " x))]))]))
-
-(provide /)
-(define (/ . xs)
-  (define (->real x) (if (bigfloat? x) (bigfloat->real x) x))
-  (cond 
-    [(andmap %real? xs)    (apply %/ xs)]
-    [(andmap bigfloat? xs) (apply bf/ xs)]
-    [else
-     (for/fold ([m (->real (first xs))]) ([x (in-list (rest xs))])
-       (cond
-         [(%real? x)    (%/ m x)]
-         [(bigfloat? x) (%/ m (bigfloat->real x))]
-         [else (error '/ (~a "number or bigfloat expected, got: " x))]))]))
+(define-fun truncate  %truncate  bftruncate   Truncate)  ; find correct name
 
 (provide numerator)
 (define (numerator x) ; this follows Maxima and MMA 
@@ -383,6 +425,171 @@
           (%denominator x))
       (error 'denominator (~a "number or bigfloat expected, got: " x))))
 
+(provide rationalize)
+(define (rationalize x tolerance)
+  (define X (if (bigfloat? x)
+                (bigfloat->rational x)
+                x))
+  (%rationalize X tolerance))
+
+;;; 4.3.2.2 Number comparison
+
+(define-syntax (define-fun2 stx)
+  (syntax-case stx ()
+    #;[(_ name %name bfname)
+     (syntax/loc stx 
+       (define-fun2 name %name bfname name))]
+    [(_ name %name bfname calcura-name)
+     (syntax/loc stx 
+       (begin
+         (provide name)
+         (define (name x y)
+           ; (displayln (list 'name x y))
+           (cond  
+             [(and (%number? x)  (%number?   y)) (%name  x y)]
+             [(and (bigfloat? x) (bigfloat? y))  (bfname x y)]
+             [(and (%number? x)  (bigfloat? y))  (name (bf x) y)]
+             [(and (bigfloat? x) (%number?   y)) (name x (bf y))]
+             [else (error 'name (~a "expected two numbers (including bigfloats), got: " x " , " y))]))))]))
+
+; TODO: nary versions ...
+(define-fun2 =  %=  bf=  Equal)       ; aka ==
+(define-fun2 >  %>  bf>  Greater) 
+(define-fun2 <  %<  bf<  Less)
+(define-fun2 >= %>= bf>= GreaterEqual)
+(define-fun2 <= %<= bf<= LessEqual)
+
+;;; 4.3.2.3 Powers and Roots
+
+(define-fun sqrt %sqrt bfsqrt Sqrt)
+
+(provide integer-sqrt)
+(define (integer-sqrt x)
+  (unless (integer? x)
+    (error 'integer-sqrt (~a "expected an integer, got: " x)))
+  (define X (if (bigfloat? x) (bigfloat->integer x) x))
+  (define is (%integer-sqrt X))
+  (if (bigfloat? x) (bf is) is))
+
+(provide integer-sqrt/remainder)
+(define (integer-sqrt/remainder x)
+  (unless (integer? x)
+    (error 'integer/remainder-sqrt (~a "expected an integer, got: " x)))
+  (define X (if (bigfloat? x) (bigfloat->integer x) x))
+  (define-values (is r) (%integer-sqrt/remainder X))
+  (define IS (if (and (bigfloat? x) (real? is)) (bf is) is))
+  (define R  (if (bigfloat? x) (bf r)  r))
+  (values IS R))
+
+(define-fun2 expt %expt bfexpt Power)
+
+(define-fun sqr  %sqr  bfsqr   Sqr)
+
+(define-fun exp %exp bfexp Exp)
+(define-fun ln  %log bflog Log)
+
+(provide log)
+; (log x)   ; b = 10
+; (log b x)
+(define (log b [x #f]) ; this doesn't follow Racket
+  (let ([b (if x b #f)]
+        [x (if x x b)])
+    (cond
+      [(not b)
+       ; single argument: natural logarithm
+       (cond
+         [(%number?  x) (fllog x)]
+         [(bigfloat? x) (bflog x)]
+         [else          (log x)])]
+      [else
+       (cond
+         [(and (%number? b) (%number? x))
+          (cond [(= b 10) (/ (%log x) (%log 10))]
+                [(= b  2) (/ (%log x) (%log  2))]
+                [else     (/ (%log x) (%log  b))])]
+         [(and (bigfloat? b) (bigfloat? x))
+          (cond [(bf= b 10.bf) (bflog10 x)]
+                [(bf= b  2.bf) (bflog2 x)]
+                [else          (bf/ (bflog x) (bflog b))])]
+         [(and (%number? b) (bigfloat? x))
+          (bf/ (bflog x)
+               (bflog (bf b)))]
+         [(and (bigfloat? b) (%number? x))
+          (bf/ (bflog (bf x))
+               (bflog b))]
+         [else (error 'log "expected one or two numbers (including bigfloats)")])])))
+
+;;; 4.3.2.4 Trigonometric Functions
+
+(define-fun sin %sin bfsin Sin)
+(define-fun cos %cos bfcos Cos)
+(define-fun tan %tan bftan Tan)
+
+(define-fun asin %asin bfasin ArcSin)
+(define-fun acos %acos bfacos ArcCos)
+(define-fun atan %atan bfatan ArcTan)
+
+;;; Hyperbolic Functions
+
+(define-fun sinh %sinh bfsinh Sinh)
+(define-fun cosh %cosh bfcosh Cosh)
+(define-fun tanh %tanh bftanh Tanh)
+
+(define-fun asinh %asinh bfasinh ArcSinh)
+(define-fun acosh %acosh bfacosh ArcCosh)
+(define-fun atanh %atanh bfatanh ArcTanh)
+
+
+
+(define-fun infinite? %infinite? bfinfinite?  InfinityQ) ; find correct name: Infinity represents a positive, infinite quantity
+(define-fun nan?      %nan?      bfnan?       NaNQ)
+
+
+; bffrac
+; bfrint
+
+(provide max)
+(define (max . xs)
+  (define (->flonum x) (if (bigfloat? x) (bigfloat->flonum x) x))
+  (cond 
+    [(andmap %real? xs)    (apply %max xs)]
+    [(andmap bigfloat? xs) (apply bfmax xs)]
+    [else
+     (for/fold ([m (first xs)])
+               ([x (in-list (rest xs))])
+       (cond
+         [(inexact? m)  (if (bigfloat? x)
+                            (%max m (bigfloat->flonum x))
+                            (%max m x))]
+         [(bigfloat? m) (if (inexact? x)
+                            (%max (bigfloat->flonum m) x)
+                            (bfmax m (bf x)))]
+         [(%number? m)  (if (bigfloat? x)
+                            (bfmax (bf m) x)
+                            (%max m x))]
+         [else 'max "internal error"]))]))
+
+(provide min)
+(define (min . xs)
+  (define (->flonum x) (if (bigfloat? x) (bigfloat->flonum x) x))
+  (cond 
+    [(andmap %real? xs)    (apply %min xs)]
+    [(andmap bigfloat? xs) (apply bfmin xs)]
+    [else
+     (for/fold ([m (first xs)])
+               ([x (in-list (rest xs))])
+       (cond
+         [(inexact? m)  (if (bigfloat? x)
+                            (%min m (bigfloat->flonum x))
+                            (%min m x))]
+         [(bigfloat? m) (if (inexact? x)
+                            (%min (bigfloat->flonum m) x)
+                            (bfmin m (bf x)))]
+         [(%number? m)  (if (bigfloat? x)
+                            (bfmin (bf m) x)
+                            (%min m x))]
+         [else 'min "internal error"]))]))
+
 
 ;; ; Conversion from degrees to radians
 
@@ -391,4 +598,85 @@
 ;; (define-fun deg %deg bfdeg )
 
 
+;;;
+;;; Tests
+;;;
 
+#;(list "+"
+      (and  (equal? (+)      0)
+            (equal? (+ 1)    1)
+            (equal? (+ 1.)   1.)
+            (equal? (+ 1.bf) 1.bf)
+
+            (equal? (+ 1. 2.)    3.)
+            (equal? (+ 1. 2)     3.)
+            (equal? (+ 1. 2.bf)  3.)
+            (equal? (+ 1. 2.bf)  3.)
+
+            (equal? (+ 2.   1.)  3.)
+            (equal? (+ 2    1.)  3.)
+            (equal? (+ 2.bf 1.)  3.)
+            (equal? (+ 2.bf 1.)  3.)
+
+            (equal? (+ 1 2.   3)   6.)
+            (equal? (+ 1 2.bf 3)   6.bf))
+      "*"
+      (and  (equal? (*)      1)
+            (equal? (* 1)    1)
+            (equal? (* 1.)   1.)
+            (equal? (* 1.bf) 1.bf)
+
+            (equal? (* 1.   2.)    2.)
+            (equal? (* 1.   2)     2.)
+            (equal? (* 1.   2.bf)  2.)            
+            (equal? (* 1    2.bf)  2.bf)
+            (equal? (* 1.bf 2)     2.bf)
+            (equal? (* 1.bf 2.bf)  2.bf)
+            (equal? (* 1    2)     2)            
+
+            (equal? (* 2.   1.)  2.)
+            (equal? (* 2    1.)  2.)
+            (equal? (* 2.bf 1.)  2.)
+            (equal? (* 2.bf 1.)  2.)
+
+            (equal? (* 1 2.   3)   6.)
+            (equal? (* 1 2.bf 3)   6.bf))
+
+      "unary -"
+      (and (equal? (- 1.)   -1.)
+           (equal? (- 1)    -1)
+           (equal? (- 1.bf) -1.bf))
+      "binary -"
+      (and (equal? (- 2.   1.)   1.)
+           (equal? (- 2.   1)    1.)
+           (equal? (- 2    1.)   1.)
+           (equal? (- 2.bf 1.)   1.)
+           (equal? (- 2.   1.bf) 1.)
+           (equal? (- 2.bf 1.bf) 1.bf)
+           (equal? (- 2.bf 1)    1.bf)
+           (equal? (- 2    1.bf) 1.bf)
+           (equal? (- 2    1)    1))
+      "nary -"
+      (and (equal? (- 5.   1.   2.)   2.)
+           (equal? (- 5.   1    2.)   2.)
+           (equal? (- 5    1.   2.)   2.)
+           (equal? (- 5.bf 1.   2.)   2.)
+           (equal? (- 5.   1.bf 2.)   2.)
+           (equal? (- 5.bf 1.bf 2.)   2.)
+           (equal? (- 5.bf 1    2.)   2.)
+           (equal? (- 5    1.bf 2.)   2.)
+           (equal? (- 5    1    2.)   2.))
+      (and (equal? (- 5.   1.   2.bf)   2.)
+           (equal? (- 5.   1    2.bf)   2.)
+           (equal? (- 5    1.   2.bf)   2.)
+           (equal? (- 5.bf 1.   2.bf)   2.)
+           (equal? (- 5.   1.bf 2.bf)   2.)
+           (equal? (- 5.bf 1.bf 2.bf)   2.bf)
+           (equal? (- 5.bf 1    2.bf)   2.bf)
+           (equal? (- 5    1.bf 2.bf)   2.bf)
+           (equal? (- 5    1    2.bf)   2.bf)
+           (equal? (- 5    1    2)      2))
+      "max"
+      (and (equal? (max 3 5  7.bf) 7.bf)
+           (equal? (max 3 5. 7.bf) 7.))
+      )
