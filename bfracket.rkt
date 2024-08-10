@@ -55,23 +55,25 @@
 ; Number like 2.0 and 2.0.bf also represent integers.
 (define (integer? x)
   (or (%integer?  x)
-      (bfinteger? x)))
+      (and (bigfloat? x) (bfinteger? x))))
 
 (provide exact-integer?)
 (define (exact-integer? x)
   (or (%exact-integer?  x)
-      (bfinteger? x)))
+      (and (bigfloat? x) (bfinteger? x))))
 
 (provide exact-nonnegative-integer?)
 (define (exact-nonnegative-integer? x)
   (or (%exact-nonnegative-integer?  x)
-      (and (bfinteger? x)
+      (and (bigfloat? x)
+           (bfinteger? x)
            (bf>= x 0.bf))))
 
 (provide exact-positive-integer?)
 (define (exact-positive-integer? x)
   (or (%exact-positive-integer?  x)
-      (and (bfinteger? x)
+      (and (bigfloat? x)
+           (bfinteger? x)
            (bf> x 0.bf))))
 
 ; Since bigfloats are exact, inexact-real? is unchanged.
