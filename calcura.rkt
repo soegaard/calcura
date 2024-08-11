@@ -227,6 +227,8 @@
 (define (negative-inexact? x) (and (number? x) (inexact? x) (negative? x)))
 (define (positive-inexact? x) (and (number? x) (inexact? x) (positive? x)))
 
+(define (half-integer? x)     (and (number? x) (integer? (* 2 x))))
+
 (define (float? x) (or (flonum? x) (bigfloat? x)))
 
 
@@ -247,7 +249,7 @@
                          [one:           exact-one?]
 
                          [integer:       exact-integer?]
-
+                         
                          [flonum:        flonum?]
                          [bigfloat:      bigfloat?]
                          [float:         float?]    ; flonum or bigfloat
@@ -1953,7 +1955,7 @@
 
 
 ; Power[x,y]
-;   TODO - WIP
+;   TODO: WIP
 (define-command Power #:attributes '(Listable NumericFunction OneIdentity Protected)
   (let ()
     (define (sqrt-natural form n)
@@ -2227,7 +2229,10 @@
               [(equal? x y) 1]
               [else         (if (equal? x 1)
                                 (Power y -1)
-                                (Sort (Times x (Power y -1))))])]
+                                (let ([result (Times x (Power y -1))])
+                                  (if (times-form? result)
+                                      (Sort result)
+                                      result)))])]
       [else form])))
 
 (define (terms->sum exprs)
@@ -2599,6 +2604,33 @@
       [(z) (Log 2 z)]
       [else form])))
 
+;;;
+;;; Statistics
+;;;
+
+(require (prefix-in number-theory: math/number-theory))
+(require (prefix-in special:       math/special-functions))
+(require (prefix-in %              "double-factorial.rkt"))
+
+; Factorial[n]
+;   Computes the factorial n!.
+;   If n is a non-integer, Gamma(1+n) is returned.
+;   Exact values for integers and half-integers.
+(define-command Factorial #:attributes '(Listable NumericFunction Protected)
+  (λ (form)
+    (match-parts form
+      ; [[(integer: n)]        (number-theory:factorial n)]
+      [[(? half-integer? k)]  ; n! = Gamma[n-1]
+                              (define n (+ (exact-integer (- k 1/2)) 1))
+                              (if (>= n 0)                                  
+                                  (Times (Divide (%double-factorial (- (* 2 n) 1))
+                                                 (expt 2 n))
+                                         (Sqrt 'Pi))
+                                  form)]
+      ; [[(real: r)            (special:gamma (+ r 1))]]
+      [else form])))
+
+
 
 
 ;;;
@@ -2961,7 +2993,7 @@
             (equal? (FullForm (Power (Power 'x 2) 3))      '(Power x 6))            
             )
       "Divide"
-      (and  (equal? (FullForm (Divide 'Pi 2))              '(Times 1/2 Pi)))  ; note the order
+      (list  (equal? (FullForm (Divide 'Pi 2))              '(Times 1/2 Pi)))  ; note the order
       "Sqrt"
       (and  (equal? (Sqrt 3.)            (flsqrt 3.))
             (equal? (FullForm (Sqrt 'x)) '(Power x 1/2))

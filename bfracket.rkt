@@ -142,6 +142,15 @@
 (provide (rename-out [%real->single-flonum real->single-flonum]
                      [%real->double-flonum real->double-flonum]))
 
+(provide exact-integer)
+(define (exact-integer x)
+  ; converts an integer x into an exact integer
+  (cond
+    [(%exact?   x) x]
+    [(inexact?  x) (inexact->exact x)]
+    [(bigfloat? x) (bigfloat->integer x)]
+    [else          (error 'exact-integer (~a "expected an integer, got: " x))]))
+
 
 ;; Helpers
 
