@@ -53,7 +53,7 @@
 
 ; Each symbol has an associated set of attributes.
 ; The user can read and set these with Attributes, SetAttributes and more.
-; The functions below are for implementing these.
+; The functions below is used to implement attributes.
 
 (define attributes-table (make-hasheq))  ; symbol -> list of symbols
 
@@ -67,7 +67,7 @@
 ;;; The global symbol table of commands
 ;;;
 
-(define builtins-table   (make-hasheq))  ; symbol -> procedure
+(define builtins-table (make-hasheq))  ; symbol -> procedure
 
 (define (get-builtin symbol)
   (hash-ref builtins-table symbol #f))
@@ -85,9 +85,9 @@
 ; The `head` of an expression is `h` and the `e₁, e₂,...` are
 ; called the `elements` of an expression.
 
-; Both the head and elements of an expression are expressions themselves.
+; Both the head and the elements of an expression are themselves expressions.
 
-; Besides expressions of the form h[e₁, e₂,...] there is also atomic expressions.
+; Besides expressions of the form h[e₁, e₂,...] there are also atomic expressions.
 
 
 ;;; Representation
@@ -2629,8 +2629,6 @@
                                   form)]
       ; [[(real: r)            (special:gamma (+ r 1))]]
       [else form])))
-
-
 
 
 ;;;

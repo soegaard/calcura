@@ -106,6 +106,7 @@
 
 (define-syntax (MakeForm stx)
   (syntax-parse stx
+    ; parts is a vector of the form (vector #f expr ...)
     [(_MakeForm head parts)
      (syntax/loc stx
        (do-make-form2 head parts))]))
@@ -143,7 +144,8 @@
                            (make-new-form))]
         [else          (make-new-form)]))))
 
-; Head[expr]
+; Head[expr]    return head of expression
+; Head[expr,h]  wrap expression in the head `h`
 (define do-head
   (λ (form)
     (case (form-length form)
