@@ -153,6 +153,13 @@
 ;;; match-form and match-parts
 ;;;
 
+; SYNTAX
+; (match-form form-expr [(head-sym elem-pat ...) . more] ...)
+; (match-form form-expr [(head-sym elem-pat ...) . more] ... [else . more-else])
+;   Evaluate `form-expr` and then perform pattern matching.
+;   The form value matches a clause `(head-sym elem-pat ...)` 
+;   of the head of the form is the symbol `head-sym` and the elements
+;   match the standard match patterns `elem-pat` ...
 (define-syntax (match-form stx)
   (syntax-case stx (else)
     [(_match-form form-expr [(head-sym elem-pat ...) . more] ...)
@@ -173,6 +180,14 @@
            [(form _ 'head-sym (vector #f elem-pat ...)) . more]
            ...
            [_ . more-else])))]))
+
+; SYNTAX
+; (match-parts form-expr [(elem-pat ...) . more] ...)
+; (match-parts form-expr [(elem-pat ...) . more] ... [else . more-else])
+;   Evaluate `form-expr` and then perform pattern matching.
+;   The form value matches clause the pattern `(elem-pat ...)` 
+;   if the elements of the form value match the standard match patterns `elem-pat` ...
+;   Note, the head isn't required to match anything.
 
 (define-syntax (match-parts stx)
   (syntax-case stx (else)
@@ -321,8 +336,8 @@
                                                        name)))])))
 ; (ktimes: k pat)
 ;   Matches if
-;     - the value matces pat then k is bound to 1.
-;     - the values is a Times[k,pat]
+;     - the value matches `pat` then `k` is bound to 1.
+;     - the value is a form that matches `Times[k,pat]`
 
 ; (ktimes: k pat ...)
 ;   Matches a Times form.
@@ -515,7 +530,7 @@
       [else form])))
 
 
-; The symbol 'Nothing will be automatically from lists.
+; The symbol 'Nothing will be automatically removed from lists.
 (define-command Nothing #:attributes '(Protected)
   (λ (form)    
     'Nothing))
